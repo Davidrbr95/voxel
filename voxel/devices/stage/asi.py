@@ -22,6 +22,7 @@ SCAN_PATTERN = {
 
 
 # singleton wrapper around TigerController
+# Potential
 class TigerControllerSingleton(TigerController, metaclass=Singleton):
     def __init__(self, com_port):
         super(TigerControllerSingleton, self).__init__(com_port)

@@ -2,8 +2,9 @@ import logging
 import struct
 import serial
 from voxel.devices.tunable_lens.base import BaseTunableLens
-
+import time
 # constants for Optotune EL-E-4i controller
+SWITCH_TIME  = 1
 
 MODES = {
     "external": ['MwDA', '>xxx'],
@@ -30,12 +31,13 @@ class TunableLens(BaseTunableLens):
         self.tunable_lens.flush()
         # set id to serial number of lens
         self.id = self.send_command('X', '>x8s')[0].decode('ascii')
+        # self.current = 0.0 #assumes that tuneable lens starts at zero
 
     @property
     def mode(self):
         """Get the tunable lens control mode."""
         mode = self.send_command('MMA', '>xxxB')[0]
-
+        print('Mode', mode)
         if mode == 1:
             return 'internal'
         if mode == 5:
@@ -44,12 +46,37 @@ class TunableLens(BaseTunableLens):
     @mode.setter
     def mode(self, mode: str):
         """Set the tunable lens control mode."""
-
+        print('Set to mode: ', mode)
         valid = list(MODES.keys())
         if mode not in valid:
             raise ValueError("mode must be one of %r." % valid)
         mode_list = MODES[mode]
         self.send_command(mode_list[0], mode_list[1])
+        print('Sent commands', mode_list)
+
+    @property
+    def current(self):
+        """Get the current on lens."""
+        print('Current: ', self.current)
+    
+    @current.setter
+    def current(self, current: float):
+        """Set the current on the lens."""
+        max_current = 293 # mA hardcoded value would be nice if we could read this 
+        current_code = round(current/max_current * 4096)
+        if not (-4096 <= current_code <= 4096):
+            raise ValueError("Current value must be between -4096 and 4096")
+        hex_value = format(current_code & 0xFFFF, '04X')
+        
+        # Split the hexadecimal value into high and low bytes
+        high_byte = hex_value[:2]
+        low_byte = hex_value[2:]
+        # Construct the full command string
+        command = f"{self._str2hex('Aw')}{str(high_byte)}{str(low_byte)}{self._str2hex('LH')}"       
+        command = bytes.fromhex(command)
+        self.send_command(command)
+        time.sleep(SWITCH_TIME)
+        
 
     @property
     def signal_temperature_c(self):
@@ -59,12 +86,17 @@ class TunableLens(BaseTunableLens):
         return state
 
     def send_command(self, command, reply_fmt=None):
+        print('start command', command)
         if type(command) is not bytes:
+            print('Command is not byte')
             command = bytes(command, encoding='ascii')
+            print('new command after ascii enconding', command)
+
         command = command + struct.pack('<H', crc_16(command))
         if self.debug:
             commandhex = ' '.join('{:02x}'.format(c) for c in command)
             print('{:<50} ¦ {}'.format(commandhex, command))
+        print('FULL COMMAND', command)
         self.tunable_lens.write(command)
 
         if reply_fmt is not None:
@@ -76,7 +108,6 @@ class TunableLens(BaseTunableLens):
 
             if response is None:
                 raise Exception('Expected response not received')
-
             data, crc, newline = struct.unpack('<{}sH2s'.format(response_size), response)
             if crc != crc_16(data) or newline != b'\r\n':
                 raise Exception('Response CRC not correct')
@@ -85,3 +116,6 @@ class TunableLens(BaseTunableLens):
 
     def close(self):
         self.tunable_lens.close()
+    
+    def _str2hex(self, input_string):
+        return ''.join(format(ord(c), '02x') for c in input_string)
