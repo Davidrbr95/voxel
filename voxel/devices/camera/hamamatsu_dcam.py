@@ -10,6 +10,7 @@ BUFFER_SIZE_MB = 2400
 # subarray parameter values
 SUBARRAY_OFF = 1
 SUBARRAY_ON = 2
+GENTL_INFINITE = 18446744073709551615
 
 # dcam properties dict for convenience in calls
 PROPERTIES = {
@@ -373,7 +374,7 @@ class Camera(BaseCamera):
         self.dcam.buf_alloc(self.buffer_size_frames)
         self.log.info(f"buffer set to: {self.buffer_size_frames} frames")
 
-    def start(self):
+    def start(self, frames = GENTL_INFINITE):
         # initialize variables for acquisition run
         self.dropped_frames = 0
         self.pre_frame_time = 0

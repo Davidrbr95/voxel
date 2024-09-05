@@ -161,7 +161,7 @@ class Stage(BaseStage):
     @property
     def position_mm(self):
         ms2000_position_um = self.ms2000.get_position_um(self.hardware_axis)
-        return self._hardware_to_instrument({self.hardware_axis: ms2000_position_um}).get(self.instrument_axis, None)
+        return self._hardware_to_instrument({self.hardware_axis: ms2000_position_um/1000}).get(self.instrument_axis, None)
 
     @position_mm.setter
     def position_mm(self, value):
@@ -186,7 +186,6 @@ class Stage(BaseStage):
     @backlash_mm.setter
     def backlash_mm(self, backlash: float):
         """Set the axis backlash compensation to a set value (0 to disable)."""
-        # print(**{self.hardware_axis: backlash})
         self.ms2000.set_backlash(self.hardware_axis, backlash)
 
     @property

@@ -3,6 +3,7 @@ from enum import Enum
 
 from pycobolt import CoboltLaser
 from sympy import symbols, solve, Expr
+from voxel.devices.utils.singleton import Singleton
 
 from voxel.descriptors.deliminated_property import DeliminatedProperty
 from voxel.devices.lasers.base import BaseLaser
@@ -14,6 +15,12 @@ if sys.version_info < (3, 11):
         pass
 else:
     from enum import StrEnum
+
+
+class SkyraControllerSingleton(CoboltLaser, metaclass=Singleton):
+    def __init__(self, com_port):
+        print('INITIALIZING THE LASER SINGLETON')
+        super(SkyraControllerSingleton, self).__init__(com_port)
 
 
 class Cmd(StrEnum):
@@ -66,7 +73,9 @@ class SkyraLaser(BaseLaser):
             max_power_mw: float,
             min_current_ma: float,
             max_current_ma: float,
-            coefficients: dict
+            coefficients: dict,
+            cobolt = None
+            
     ):
         """
         Communicate with Skyra Cobolt laser.
@@ -79,8 +88,8 @@ class SkyraLaser(BaseLaser):
         """
         super().__init__(id)
         print(port, id)
-        self._inst = CoboltLaser(port)
-
+        # self._inst = CoboltLaser(port)
+        self._inst = SkyraControllerSingleton(com_port=port) if cobolt is None else cobolt
         self._prefix = prefix
         self._coefficients = coefficients
         self._min_current_ma = min_current_ma

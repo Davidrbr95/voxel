@@ -23,44 +23,52 @@ def crc_16(s):
 class TunableLens(BaseTunableLens):
 
     def __init__(self, port: str):
-
         self.log = logging.getLogger(__name__ + "." + self.__class__.__name__)
+        self.log.info('Starting the initialization of Tunable lens')
         # (!!) hardcode debug to false
+        self.port = port
+        self.baudrate = 115200
+        self.timeout = 1
         self.debug = False
-        self.tunable_lens = serial.Serial(port=port, baudrate=115200, timeout=1)
+        self.tunable_lens = serial.Serial(port=self.port , baudrate=self.baudrate, timeout=self.timeout)
+        self.log.info('Passed connecting to serial port for Tunable lens')
         self.tunable_lens.flush()
         # set id to serial number of lens
         self.id = self.send_command('X', '>x8s')[0].decode('ascii')
-        # self.current = 0.0 #assumes that tuneable lens starts at zero
+        self.log.info(f"The tunable lens has this ID {self.id}")
+        self._current = 0.0 #sets the tuneable lens starts at zero
 
     @property
     def mode(self):
         """Get the tunable lens control mode."""
+        self.tunable_lens.reset_input_buffer()
         mode = self.send_command('MMA', '>xxxB')[0]
-        print('Mode', mode)
         if mode == 1:
             return 'internal'
         if mode == 5:
             return 'external'
+        return 'internal'
 
     @mode.setter
     def mode(self, mode: str):
         """Set the tunable lens control mode."""
-        print('Set to mode: ', mode)
+        self.log.info(f"Set to mode: {mode}")
+        self.tunable_lens.reset_input_buffer()
         valid = list(MODES.keys())
         if mode not in valid:
             raise ValueError("mode must be one of %r." % valid)
         mode_list = MODES[mode]
-        self.send_command(mode_list[0], mode_list[1])
-        print('Sent commands', mode_list)
+        self.send_command(mode_list[0])
+        self.log.info(f"Sent comamnd to mode: {mode_list}")
 
     @property
     def current(self):
         """Get the current on lens."""
-        print('Current: ', self.current)
+        return self._current
     
     @current.setter
     def current(self, current: float):
+        self.tunable_lens.reset_input_buffer()
         """Set the current on the lens."""
         max_current = 293 # mA hardcoded value would be nice if we could read this 
         current_code = round(current/max_current * 4096)
@@ -76,16 +84,20 @@ class TunableLens(BaseTunableLens):
         command = bytes.fromhex(command)
         self.send_command(command)
         time.sleep(SWITCH_TIME)
+        self._current = current
         
 
     @property
     def signal_temperature_c(self):
         """Get the temperature in deg C."""
+        self.tunable_lens.reset_input_buffer()
         state = {}
+        # self.tunable_lens.flush()
         state['Temperature [C]'] = self.send_command(b'TCA', '>xxxh')[0] * 0.0625
         return state
 
     def send_command(self, command, reply_fmt=None):
+        self.tunable_lens.reset_input_buffer()
         print('start command', command)
         if type(command) is not bytes:
             print('Command is not byte')
@@ -107,14 +119,18 @@ class TunableLens(BaseTunableLens):
                 print('{:>50} ¦ {}'.format(responsehex, response))
 
             if response is None:
-                raise Exception('Expected response not received')
+                return None
+                # raise Exception('Expected response not received')
             data, crc, newline = struct.unpack('<{}sH2s'.format(response_size), response)
+            print('GOT RESPONSE', data)
             if crc != crc_16(data) or newline != b'\r\n':
-                raise Exception('Response CRC not correct')
+                # raise Exception('Response CRC not correct')
+                return None
 
             return struct.unpack(reply_fmt, data)
 
     def close(self):
+        self.tunable_lens.reset_input_buffer()
         self.tunable_lens.close()
     
     def _str2hex(self, input_string):

@@ -117,7 +117,6 @@ class MS2000(SerialPort):
             self.baud_rate = baud_rate
         else:
             raise ValueError("The baud rate is not valid. Valid rates: 9600, 19200, 28800, or 115200.")
-        print('IN MS2000 class')
         self.connect_to_serial()
         self.skipped_replies = 0
         self.log = logging.getLogger(__name__)
@@ -364,8 +363,6 @@ class MS2000(SerialPort):
         args_str = "".join([f" {a.upper()}" for a in args])
         kwds_str = "".join([f" {a.upper()}={v}" for a, v in kwds.items()])
         cmd_str = f"{card_addr_str}{cmd}{args_str}{kwds_str}\r"
-        # print('CMD', cmd_str)
-        # exit()
         self.send_command(cmd_str)
         response = self.read_response()
         return response
@@ -424,10 +421,8 @@ class MS2000(SerialPort):
  
     def set_max_speed(self, axis: str, speed:int) -> None:
         """Set the speed on a specific axis. Speed is in mm/s."""
-        print('SENDINGGGGGGGGGGGGGGGGGGGGGGGGGGG', f"SPEED {axis}={speed}\r")
         self.send_command(f"SPEED {axis}={speed}\r")
         response = self.read_response()
-        print('RESPONSE', response)
     
     def get_max_speed(self, axis: str):
         """Get the speed on a specific axis. Speed is in mm/s."""
@@ -472,15 +467,15 @@ class MS2000(SerialPort):
         self.send_command(f"ACCEL {axis}={acceleration}\r")
         self.read_response()
 
-    def get_lower_travel_limit(self, axis:str):
+    def get_lower_travel_limit(self, axis:str) -> float:
         self.send_command(f"SL {axis}?\r")
         response = self.read_response()
-        return response.split(" ")[1].split("=")[1]
+        return float(response.split(" ")[1].split("=")[1])
 
-    def get_upper_travel_limit(self, axis:str):
+    def get_upper_travel_limit(self, axis:str) -> float:
         self.send_command(f"SU {axis}?\r")
         response = self.read_response()
-        return response.split(" ")[1].split("=")[1]
+        return float(response.split(" ")[1].split("=")[1])
  
     # ------------------------------ #
     #    MS2000 Utility Functions    #
