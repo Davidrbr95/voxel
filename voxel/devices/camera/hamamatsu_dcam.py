@@ -10,6 +10,7 @@ BUFFER_SIZE_MB = 2400
 # subarray parameter values
 SUBARRAY_OFF = 1
 SUBARRAY_ON = 2
+GENTL_INFINITE = 18446744073709551615
 
 # dcam properties dict for convenience in calls
 PROPERTIES = {
@@ -88,7 +89,8 @@ BINNING = dict()
 TRIGGERS = {
     "mode": dict(),
     "source": dict(),
-    "polarity": dict()
+    "polarity": dict(), 
+    "active": dict()
 }
 
 # generate valid sensor modes by querying dcam
@@ -182,6 +184,11 @@ class Camera(BaseCamera):
     @property
     def width_offset_px(self):
         return int(self.dcam.prop_getvalue(PROPERTIES["subarray_hpos"]))
+    
+    @width_offset_px.setter
+    def width_offset_px(self, value: int):
+        print('Setting', value)
+        self.dcam.prop_setvalue(PROPERTIES["subarray_hpos"], value)   
 
     @DeliminatedProperty(minimum=float('-inf'), maximum=float('inf'))
     def height_px(self):
@@ -204,6 +211,11 @@ class Camera(BaseCamera):
     @property
     def height_offset_px(self):
         return int(self.dcam.prop_getvalue(PROPERTIES["subarray_vpos"]))
+
+    @height_offset_px.setter
+    def height_offset_px(self, value: int):
+        print('Setting', value)
+        self.dcam.prop_setvalue(PROPERTIES["subarray_vpos"], value)   
 
     @property
     def pixel_type(self):
@@ -251,9 +263,11 @@ class Camera(BaseCamera):
         source = self.dcam.prop_getvalue(PROPERTIES["trigger_source"])
         mode = self.dcam.prop_getvalue(PROPERTIES["trigger_mode"])
         polarity = self.dcam.prop_getvalue(PROPERTIES["trigger_polarity"])
+        active = self.dcam.prop_getvalue(PROPERTIES["trigger_active"])
         return {"mode": {v:k for k, v in TRIGGERS['mode'].items()}[mode],
                 "source": {v:k for k, v in TRIGGERS['source'].items()}[source],
-                "polarity": {v: k for k, v in TRIGGERS['polarity'].items()}[polarity]}
+                "polarity": {v: k for k, v in TRIGGERS['polarity'].items()}[polarity],
+                "active": {v: k for k, v in TRIGGERS['active'].items()}[active]}
 
     @trigger.setter
     def trigger(self, trigger: dict):
@@ -261,6 +275,7 @@ class Camera(BaseCamera):
         mode = trigger['mode']
         source = trigger['source']
         polarity = trigger['polarity']
+        active = trigger['active']
 
         valid_mode = list(TRIGGERS['mode'].keys())
         if mode not in valid_mode:
@@ -271,13 +286,17 @@ class Camera(BaseCamera):
         valid_polarity = list(TRIGGERS['polarity'].keys())
         if polarity not in valid_polarity:
             raise ValueError("polarity must be one of %r." % valid_polarity)
+        valid_active = list(TRIGGERS['active'].keys())
+        if active not in valid_active:
+            raise ValueError("active must be one of %r." % valid_active)
 
         # TODO figure out TRIGGERACTIVE bool
         self.dcam.prop_setvalue(PROPERTIES["trigger_mode"], TRIGGERS['mode'][mode])
         self.dcam.prop_setvalue(PROPERTIES["trigger_source"], TRIGGERS['source'][source])
         self.dcam.prop_setvalue(PROPERTIES["trigger_polarity"], TRIGGERS['polarity'][polarity])
+        self.dcam.prop_setvalue(PROPERTIES["trigger_active"], TRIGGERS['active'][active])
 
-        self.log.info(f"trigger set to, mode: {mode}, source: {source}, polarity: {polarity}")
+        self.log.info(f"trigger set to, mode: {mode}, source: {source}, polarity: {polarity}, active: {active}")
         # refresh parameter values
         self._update_parameters()
 
@@ -291,7 +310,7 @@ class Camera(BaseCamera):
         if binning not in BINNING:
             raise ValueError("binning must be one of %r." % BINNING)
         else:
-            self.dcam.prop_setvalue(PROPERTIES["binning"], binning)
+            self.dcam.prop_setvalue(PROPERTIES["binning"], BINNING[binning])
             self.log.info(f"binning set to: {binning}")
             # refresh parameter values
             self._update_parameters()
@@ -355,7 +374,7 @@ class Camera(BaseCamera):
         self.dcam.buf_alloc(self.buffer_size_frames)
         self.log.info(f"buffer set to: {self.buffer_size_frames} frames")
 
-    def start(self):
+    def start(self, frames = GENTL_INFINITE):
         # initialize variables for acquisition run
         self.dropped_frames = 0
         self.pre_frame_time = 0
@@ -446,6 +465,14 @@ class Camera(BaseCamera):
             self.log.info(f'{propname}, {propvalue}')
             idprop = self.dcam.prop_getnextid(idprop)
 
+    def print_existing_options(self):
+        uppercase_dicts = {}
+        for name, value in globals().items():
+            if name.isupper() and isinstance(value, dict):
+                uppercase_dicts[name] = value
+                print(name, value)
+        return uppercase_dicts
+
     def _update_parameters(self):
         # grab parameter values
         self._get_min_max_step_values()
@@ -459,6 +486,8 @@ class Camera(BaseCamera):
         self._query_trigger_sources()
         # check trigger polarity options
         self._query_trigger_polarities()
+        # check trigger active options
+        self._query_trigger_active()
         # check sensor mode options
         self._query_sensor_modes()
         # check readout direction options
@@ -530,6 +559,14 @@ class Camera(BaseCamera):
            reply = self.dcam.prop_getvaluetext(PROPERTIES['trigger_polarity'], prop_value)
            if reply != False:
                TRIGGERS['polarity'][reply.lower()] = prop_value
+    
+    def _query_trigger_active(self):
+        min_prop_value = int(self.dcam.prop_getattr(PROPERTIES['trigger_active']).valuemin)
+        max_prop_value = int(self.dcam.prop_getattr(PROPERTIES['trigger_active']).valuemax)
+        for prop_value in range(min_prop_value, max_prop_value+1):
+           reply = self.dcam.prop_getvaluetext(PROPERTIES['trigger_active'], prop_value)
+           if reply != False:
+               TRIGGERS['active'][reply.lower()] = prop_value
 
     def _query_sensor_modes(self):
         min_prop_value = int(self.dcam.prop_getattr(PROPERTIES['sensor_mode']).valuemin)

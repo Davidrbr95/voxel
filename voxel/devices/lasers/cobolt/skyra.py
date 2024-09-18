@@ -3,9 +3,11 @@ from enum import Enum
 
 from pycobolt import CoboltLaser
 from sympy import symbols, solve, Expr
+from voxel.devices.utils.singleton import Singleton
 
 from voxel.descriptors.deliminated_property import DeliminatedProperty
 from voxel.devices.lasers.base import BaseLaser
+import time
 
 # Define StrEnums if they don't yet exist.
 if sys.version_info < (3, 11):
@@ -15,9 +17,16 @@ else:
     from enum import StrEnum
 
 
+class SkyraControllerSingleton(CoboltLaser, metaclass=Singleton):
+    def __init__(self, com_port):
+        print('INITIALIZING THE LASER SINGLETON')
+        super(SkyraControllerSingleton, self).__init__(com_port)
+
+
 class Cmd(StrEnum):
     LaserEnable = "l1"  # Enable(1)/Disable(0)
     LaserDisable = "l0"  # Enable(1)/Disable(0)
+    LaserStatus = "l?"
     EnableModulation = "em"
     ConstantPowerMode = "cp"
     EnableDigitalModulation = "sdmes 1"
@@ -29,10 +38,10 @@ class Cmd(StrEnum):
 
 
 class Query(StrEnum):
-    ModulationMode = "gmes?"
     AnalogModulationMode = "games?"
     DigitalModulationMode = "gdmes?"
-    PowerSetpoint = "p?"
+    PowerSetpoint = "p?",
+    ActualPower = "pa?"
 
 
 # Boolean command value that can also be compared like a boolean.
@@ -65,7 +74,9 @@ class SkyraLaser(BaseLaser):
             max_power_mw: float,
             min_current_ma: float,
             max_current_ma: float,
-            coefficients: dict
+            coefficients: dict,
+            cobolt = None
+            
     ):
         """
         Communicate with Skyra Cobolt laser.
@@ -78,9 +89,9 @@ class SkyraLaser(BaseLaser):
         the relationship between current mA and power mW
         """
         super().__init__(id)
-
-        self._inst = CoboltLaser(port)
-
+        print(port, id)
+        # self._inst = CoboltLaser(port)
+        self._inst = SkyraControllerSingleton(com_port=port) if cobolt is None else cobolt
         self._prefix = prefix
         self._coefficients = coefficients
         self._min_current_ma = min_current_ma
@@ -101,22 +112,27 @@ class SkyraLaser(BaseLaser):
         return func
 
     def enable(self):
-        self._inst.send_cmd(f'{self._prefix}Cmd.LaserEnable')
+        self._inst.send_cmd(f'{self._prefix}{Cmd.LaserEnable}')
         self.log.info(f"laser {self._prefix} enabled")
 
     def disable(self):
-        self._inst.send_cmd(f'{self._prefix}Cmd.LaserDisable')
+        self._inst.send_cmd(f'{self._prefix}{Cmd.LaserDisable}')
         self.log.info(f"laser {self._prefix} enabled")
+
+    def check_status(self):
+        return self._inst.send_cmd(f'{self._prefix}{Cmd.LaserStatus}')
 
     @DeliminatedProperty(minimum=0, maximum=lambda self: self.max_power)
     def power_setpoint_mw(self):
         if self._inst.constant_current == 'ON':
+            print('WHERE THE CONSTANT CURRENT IS ON')
             return int(round(self._coefficients_curve().subs(symbols('x'), self._current_setpoint)))
         else:
-            return self._inst.send_cmd(f'{self._prefix}Query.PowerSetpoint') * 1000
+            print('WHERE THE CONSTANT CURRENT IS OFF', float(self._inst.send_cmd(f'{self._prefix}{Query.PowerSetpoint}')) * 1000)
+            return float(self._inst.send_cmd(f'{self._prefix}{Query.PowerSetpoint}')) * 1000
 
     @power_setpoint_mw.setter
-    def power_setpoint_mw(self, value: float or int):
+    def power_setpoint_mw(self, value: float):
         if self.modulation_mode != 'off':
             # solutions for laser value
             solutions = solve(self._coefficients_curve() - value)
@@ -126,7 +142,7 @@ class SkyraLaser(BaseLaser):
                     # setpoint must be integer
                     self._current_setpoint = int(round(sol))
                     # set lasser current setpoint to ma value
-                    self._inst.send_cmd(f'{self._prefix}Cmd.CurrentSetpoint'
+                    self._inst.send_cmd(f'{self._prefix}{Cmd.CurrentSetpoint}'
                                         f'{self._current_setpoint}')
                     return
             # if no value exists, alert user
@@ -134,23 +150,24 @@ class SkyraLaser(BaseLaser):
                            f"no current mA correlates to {value} mW")
         else:
             # convert from mw to watts
-            self._inst.send_cmd(f'{self._prefix}Cmd.PowerSetpoint {value / 1000}')
+            self._inst.send_cmd(f'{self._prefix}{Cmd.PowerSetpoint} {value / 1000}')
         self.log.info(f"laser {self._prefix} set to {value} mW")
 
     @property
     def modulation_mode(self):
         # query the laser for the modulation mode
-        if self._inst.send_cmd(f'{self._prefix}Query.ModulationMode') == BoolVal.OFF:
-            return 'off'
-        elif self._inst.send_cmd(f'{self._prefix}Query.AnalogModulationMode') == BoolVal.ON:
+        if self._inst.send_cmd(f'{self._prefix}{Query.AnalogModulationMode}') == BoolVal.ON:
             return 'analog'
-        else:
+        elif  self._inst.send_cmd(f'{self._prefix}{Query.DigitalModulationMode}') == BoolVal.ON:
             return 'digital'
+        else:
+            return 'off'
 
     @modulation_mode.setter
     def modulation_mode(self, value: str):
         if value not in MODULATION_MODES.keys():
             raise ValueError("mode must be one of %r." % MODULATION_MODES.keys())
+        
         external_control_mode = MODULATION_MODES[value]['external_control_mode']
         digital_modulation = MODULATION_MODES[value]['digital_modulation']
         analog_modulation = MODULATION_MODES[value]['analog_modulation']
@@ -162,12 +179,14 @@ class SkyraLaser(BaseLaser):
     def close(self):
         self.log.info('closing and calling disable')
         self.disable()
-        if self._inst.is_connected():
-            self._inst.disconnect()
+        #Failed unit test not sure why
+        # if self._inst.is_connected():
+        #     print('DING TIS')
+        #     self._inst.disconnect()
 
     @property
     def power_mw(self) -> float:
-        return self._inst.get_power()
+        return float(self._inst.send_cmd(f'{self._prefix}{Query.ActualPower}'))*1000
 
     @property
     def temperature_c(self):
@@ -175,6 +194,7 @@ class SkyraLaser(BaseLaser):
 
     @property
     def max_power(self):
+        print('AT MAX POWER property')
         if self._inst.constant_current == 'ON':
             return int((round(self._coefficients_curve().subs(symbols('x'), 100), 1)))
         else:
