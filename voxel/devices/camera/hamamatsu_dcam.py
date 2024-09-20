@@ -250,12 +250,13 @@ class Camera(BaseCamera):
         # refresh parameter values
         self._update_parameters()
 
-    # @property
-    # def frame_time_ms(self):
-    #     if 'light sheet' in self.readout_mode:
-    #         return (self.line_interval_us * self.height_px)/1000 + self.exposure_time_ms
-    #     else:
-    #         return (self.line_interval_us * self.height_px/2)/1000 + self.exposure_time_ms
+    @property
+    def frame_time_ms(self):
+        print('Readout mode', self.sensor_mode)
+        if 'light sheet' in self.sensor_mode:
+            return (self.line_interval_us * self.height_px)/1000 + self.exposure_time_ms
+        else:
+            return (self.line_interval_us * self.height_px/2)/1000 + self.exposure_time_ms
             
     @property
     def trigger(self):
