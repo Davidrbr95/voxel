@@ -17,7 +17,6 @@ class ThorlabsWheel(BaseFilterWheel, RS232):
         RS232.__init__(self, port=port, baudrate=baudrate, **kwargs)
         
         # Initialize the filter wheel
-        BaseFilterWheel.__init__(self)
 
         
         # Go to the home filter (assuming value 1 means home position)

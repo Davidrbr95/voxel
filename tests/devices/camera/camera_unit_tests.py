@@ -1,16 +1,17 @@
-
 import os
 import sys
+# Update sys.path to include the voxel directory if needed
+voxel_path = r"C:\Users\AIBS\Desktop\UHR-OTLS-control\voxel"
+sys.path.append(voxel_path)
+
 import unittest
 from voxel.devices.camera.sdks.dcam.dcam import Dcamapi, Dcam
 from voxel.devices.camera.hamamatsu_dcam import Camera  
 
-# Update sys.path to include the voxel directory if needed
-voxel_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'voxel'))
-sys.path.append(voxel_path)
+
 
 # Constants for the tests 
-SERIAL_NUMBER = "306726"
+SERIAL_NUMBER = 306726
 WIDTH_PX = 2048
 HEIGHT_PX = 2048
 EXPOSURE_TIME_MS = 20.0
@@ -95,8 +96,14 @@ class TestCamera(unittest.TestCase):
         self.assertEqual(self.camera.width_offset_px, 20)
 
     def test_camera_set_height_px_offset(self):
-        self.camera.height_offset_px = 20
-        self.assertEqual(self.camera.height_offset_px, 20)
+        # self.camera.height_offset_px = 824
+        self.camera.height_px = 400
+        self.camera.prepare()
+        self.camera.start()
+        frame = self.camera.grab_frame()
+        print(frame.shape)
+        self.camera.stop()
+        self.assertEqual(self.camera.height_offset_px, 824)
 
     def test_camera_set_trigger_mode(self):
         failed_combinations = []

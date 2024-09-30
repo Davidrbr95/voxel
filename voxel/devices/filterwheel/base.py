@@ -4,6 +4,7 @@ class BaseFilterWheel:
 
     def __init__(self):
         self.filter_list = list()
+        self.filters = dict()
 
     @property
     def filter(self):

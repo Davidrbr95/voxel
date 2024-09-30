@@ -7,6 +7,7 @@ from multiprocessing import Array, Process
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
 from time import perf_counter, sleep
+from multiprocessing import Event, Queue, Value
 
 import numpy as np
 
@@ -194,6 +195,20 @@ class BDVWriter(BaseWriter):
         """
         Prepare the writer.
         """
+        self.tile_list = list()
+        self.channel_list = list()
+        self.dataset_dict = dict()
+        self.voxel_size_dict = dict()
+        self.affine_deskew_dict = dict()
+        self.affine_scale_dict = dict()
+        self.affine_shift_dict = dict()
+
+        self.done_reading = Event()
+        self.done_reading.set()  # Ensure it's in the correct initial state
+        self.deallocating = Event()
+        self._progress = Value("d", 0.0)
+        self._log_queue = Queue()
+        self._process = None  # Reset the process
 
         self.log.info(f"{self._filename}: intializing writer.")
         # Specs for reconstructing the shared memory object.
@@ -206,7 +221,8 @@ class BDVWriter(BaseWriter):
             "y": self._row_count_px,
             "z": CHUNK_COUNT_PX,
         }
-        shm_shape = [chunk_shape_map[x] for x in chunk_dim_order]
+
+        shm_shape = [int(chunk_shape_map[x]) for x in chunk_dim_order]
         shm_nbytes = int(
             np.prod(shm_shape, dtype=np.int64) * np.dtype(self._data_type).itemsize
         )
@@ -236,7 +252,7 @@ class BDVWriter(BaseWriter):
         # effective voxel size in x direction
         size_x = self._x_voxel_size_um
         # effective voxel size in y direction
-        size_y = self._y_voxel_size_um * np.cos(self._theta_deg * np.pi / 180.0)
+        size_y = self._y_voxel_size_um * np.cos(self.theta_deg * np.pi / 180.0)
         # effective voxel size in z direction (scan)
         size_z = self._z_voxel_size_um
         voxel_sizes = (size_z, size_y, size_x)
@@ -333,12 +349,21 @@ class BDVWriter(BaseWriter):
             (4, 4, 4),
         )
         # chunksize xyz
+        # blockdim = (
+        #     (4, 256, 256),
+        #     (4, 256, 256),
+        #     (4, 256, 256),
+        #     (4, 256, 256),
+        #     (4, 256, 256),
+        # )
+
+                # chunksize xyz
         blockdim = (
-            (4, 256, 256),
-            (4, 256, 256),
-            (4, 256, 256),
-            (4, 256, 256),
-            (4, 256, 256),
+            (4, 64, 64),
+            (4, 64, 64),
+            (4, 64, 64),
+            (4, 64, 64),
+            (4, 64, 64),
         )
         # bdv requires input string not Path
         filepath = str(
@@ -382,6 +407,7 @@ class BDVWriter(BaseWriter):
             ceil(self._frame_count_px_px / CHUNK_COUNT_PX) * CHUNK_COUNT_PX
         )
         for append_tile, append_channel in self.dataset_dict:
+            # print('BDV writere', image_size_z, self._row_count_px, self._column_count_px, self.voxel_size_dict[(append_tile, append_channel)])
             bdv_writer.append_view(
                 stack=None,
                 virtual_stack_dim=(

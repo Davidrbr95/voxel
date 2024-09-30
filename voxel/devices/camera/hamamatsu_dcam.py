@@ -4,6 +4,49 @@ from voxel.devices.utils.singleton import Singleton
 from voxel.devices.camera.base import BaseCamera
 from voxel.devices.camera.sdks.dcam.dcam import *
 from voxel.descriptors.deliminated_property import DeliminatedProperty
+import ctypes
+import ctypes.util
+
+# DCAM4 API.
+DCAMERR_ERROR = 0
+DCAMERR_NOERROR = 1
+
+DCAMPROP_ATTR_HASVALUETEXT = int("0x10000000", 0)
+DCAMPROP_ATTR_READABLE = int("0x00010000", 0)
+DCAMPROP_ATTR_WRITABLE = int("0x00020000", 0)
+
+DCAMPROP_OPTION_NEAREST = int("0x80000000", 0)
+DCAMPROP_OPTION_NEXT = int("0x01000000", 0)
+DCAMPROP_OPTION_SUPPORT = int("0x00000000", 0)
+
+DCAMPROP_TYPE_MODE = int("0x00000001", 0)
+DCAMPROP_TYPE_LONG = int("0x00000002", 0)
+DCAMPROP_TYPE_REAL = int("0x00000003", 0)
+DCAMPROP_TYPE_MASK = int("0x0000000F", 0)
+
+DCAMCAP_STATUS_ERROR = int("0x00000000", 0)
+DCAMCAP_STATUS_BUSY = int("0x00000001", 0)
+DCAMCAP_STATUS_READY = int("0x00000002", 0)
+DCAMCAP_STATUS_STABLE = int("0x00000003", 0)
+DCAMCAP_STATUS_UNSTABLE = int("0x00000004", 0)
+
+DCAMWAIT_CAPEVENT_FRAMEREADY = int("0x0002", 0)
+DCAMWAIT_CAPEVENT_STOPPED = int("0x0010", 0)
+
+DCAMWAIT_RECEVENT_MISSED = int("0x00000200", 0)
+DCAMWAIT_RECEVENT_STOPPED = int("0x00000400", 0)
+DCAMWAIT_TIMEOUT_INFINITE = int("0x80000000", 0)
+
+DCAM_DEFAULT_ARG = 0
+
+DCAM_IDSTR_MODEL = int("0x04000104", 0)
+
+DCAMCAP_TRANSFERKIND_FRAME = 0
+
+DCAMCAP_START_SEQUENCE = -1
+DCAMCAP_START_SNAP = 0
+
+DCAMBUF_ATTACHKIND_FRAME = 0
 
 BUFFER_SIZE_MB = 2400
 
@@ -126,8 +169,11 @@ class Camera(BaseCamera):
     def __init__(self, id: str):
         self.log = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
         self.id = str(id) # convert to string incase serial # is entered as int
-
         self._latest_frame = None
+        self.last_frame_number = 0 
+        # self.number_image_buffers = 0
+        self.max_backlog = 0
+        self.buffer_index = 0
 
         if DcamapiSingleton.init() is not False:
             num_cams = DcamapiSingleton.get_devicecount()
@@ -187,11 +233,12 @@ class Camera(BaseCamera):
     
     @width_offset_px.setter
     def width_offset_px(self, value: int):
-        print('Setting', value)
+        # print('Setting', value)
         self.dcam.prop_setvalue(PROPERTIES["subarray_hpos"], value)   
 
     @DeliminatedProperty(minimum=float('-inf'), maximum=float('inf'))
     def height_px(self):
+        # print('Geetting height_px', int(self.dcam.prop_getvalue(PROPERTIES["subarray_vsize"])))
         return int(self.dcam.prop_getvalue(PROPERTIES["subarray_vsize"]))
 
     @height_px.setter
@@ -203,6 +250,7 @@ class Camera(BaseCamera):
         self.dcam.prop_setvalue(PROPERTIES["subarray_vsize"], value)
 
         centered_offset_px = round((self.max_height_px / 2 - value / 2) / self.step_height_px) * self.step_height_px
+        # print('Centerd offset heigh: ', centered_offset_px)
         self.dcam.prop_setvalue(PROPERTIES["subarray_vpos"], centered_offset_px)
         self.log.info(f"height set to: {value} px")
         # refresh parameter values
@@ -210,12 +258,14 @@ class Camera(BaseCamera):
 
     @property
     def height_offset_px(self):
+        # print('Check heigh offset', int(self.dcam.prop_getvalue(PROPERTIES["subarray_vpos"])))
         return int(self.dcam.prop_getvalue(PROPERTIES["subarray_vpos"]))
 
     @height_offset_px.setter
     def height_offset_px(self, value: int):
-        print('Setting', value)
+        # print('Setting', value)
         self.dcam.prop_setvalue(PROPERTIES["subarray_vpos"], value)   
+        time.sleep(0.1)
 
     @property
     def pixel_type(self):
@@ -252,7 +302,6 @@ class Camera(BaseCamera):
 
     @property
     def frame_time_ms(self):
-        print('Readout mode', self.sensor_mode)
         if 'light sheet' in self.sensor_mode:
             return (self.line_interval_us * self.height_px)/1000 + self.exposure_time_ms
         else:
@@ -307,22 +356,26 @@ class Camera(BaseCamera):
         return binning
 
     @binning.setter
-    def binning(self, binning: str):
-        if binning not in BINNING:
+    def binning(self, binning):
+        if binning not in BINNING and binning not in [1, 2, 4]:
             raise ValueError("binning must be one of %r." % BINNING)
         else:
-            self.dcam.prop_setvalue(PROPERTIES["binning"], BINNING[binning])
-            self.log.info(f"binning set to: {binning}")
-            # refresh parameter values
+            if isinstance(binning, str):
+                self.dcam.prop_setvalue(PROPERTIES["binning"], BINNING[binning])
+                self.log.info(f"binning set to: {BINNING[binning]}")
+                # refresh parameter values
+            elif isinstance(binning, int):
+                self.dcam.prop_setvalue(PROPERTIES["binning"], binning)
+                self.log.info(f"binning set to: {binning}")
             self._update_parameters()
 
     @property
     def sensor_width_px(self):
-        return self.max_width_px
+        return 2048
 
     @property
     def sensor_height_px(self):
-        return self.min_width_px
+        return 2048
 
     @property
     def signal_sensor_temperature_c(self):
@@ -369,6 +422,7 @@ class Camera(BaseCamera):
             bit_to_byte = 1
         else:
             bit_to_byte = 2
+        self.setSubArrayMode()
         frame_size_mb = self.width_px*self.height_px/self.binning**2*bit_to_byte/1e6
         self.buffer_size_frames = round(BUFFER_SIZE_MB / frame_size_mb)
         # realloc buffers appears to be allocating ram on the pc side, not camera side.
@@ -380,7 +434,19 @@ class Camera(BaseCamera):
         self.dropped_frames = 0
         self.pre_frame_time = 0
         self.pre_frame_count_px = 0
+        self.buffer_index = -1
         self.dcam.cap_start()
+
+    def setSubArrayMode(self):
+        """
+        This sets the sub-array mode as appropriate based on the current ROI.
+        """
+        roi_w = int(self.dcam.prop_getvalue(PROPERTIES["subarray_hsize"]))
+        roi_h = int(self.dcam.prop_getvalue(PROPERTIES["subarray_vsize"]))
+        if ((roi_w == self.sensor_width_px) and (roi_h == self.sensor_height_px)):
+            self.dcam.prop_setvalue(PROPERTIES["subarray_mode"], SUBARRAY_OFF)
+        else:
+            self.dcam.prop_setvalue(PROPERTIES["subarray_mode"], SUBARRAY_ON)
 
     def abort(self):
         self.stop()
@@ -388,21 +454,119 @@ class Camera(BaseCamera):
     def stop(self):
         self.dcam.buf_release()
         self.dcam.cap_stop()
+        self.max_backlog = 0
+        self._latest_frame = None
+        self.buffer_index = 0
+        self.last_frame_number = 0 
 
     def close(self):
         if self.dcam.is_opened():
+            self._latest_frame = None
+            self.last_frame_number = 0 
+            self.max_backlog = 0
+            self.buffer_index = 0
             self.dcam.dev_close()
             DcamapiSingleton.uninit()
 
     def reset(self):
         if self.dcam.is_opened():
+            self._latest_frame = None
+            self.last_frame_number = 0 
+            self.max_backlog = 0
+            self.buffer_index = 0
             self.dcam.dev_close()
             DcamapiSingleton.uninit()
             del self.dcam
             if DcamapiSingleton.init() is not False:
                 self.dcam = Dcam(self.cam_num)
                 self.dcam.dev_open()
-                
+    
+    def getFrames(self):
+        """
+        Gets all of the available frames.
+
+        This will block waiting for new frames even if there new frames 
+        available when it is called.
+
+        FIXME: It does not always seem to block? The length of frames can
+               be zero. Are frames getting dropped? Some sort of race condition?
+        """
+        frames = []
+        for n in self.newFrames():
+            frames.append(self.dcam.buf_getframedata(n))
+
+        return frames 
+
+    def newFrames(self):
+        """
+        Return a list of the ids of all the new frames since the last check.
+        Returns an empty list if the camera has already stopped and no frames
+        are available.
+
+        This will block waiting for at least one new frame.
+        """
+
+        captureStatus = self.dcam.cap_status()
+
+        # Wait for a new frame if the camera is acquiring.
+        if captureStatus == DCAMCAP_STATUS_BUSY:
+            ret = self.dcam.wait_capevent_frameready(100)
+            while not ret:
+                ret = self.dcam.wait_capevent_frameready(100)
+
+        # Check how many new frames there are.
+        # paramtransfer = DCAMCAP_TRANSFERINFO(
+        #     0, DCAMCAP_TRANSFERKIND_FRAME, 0, 0)
+        # paramtransfer.size = ctypes.sizeof(paramtransfer)
+        # self.checkStatus(self.dcam.dcamcap_transferinfo(self.cam_num,
+        #                                            ctypes.byref(paramtransfer)),
+        #                  "dcamcap_transferinfo")
+        paramtransfer = self.dcam.cap_transferinfo()
+        cur_buffer_index = paramtransfer.nNewestFrameIndex
+        cur_frame_number = paramtransfer.nFrameCount
+
+        # Check that we have not acquired more frames than we can store in our buffer.
+        # Keep track of the maximum backlog.
+        backlog = cur_frame_number - self.last_frame_number
+        if (backlog > self.buffer_size_frames):
+            print(">> Warning! hamamatsu camera frame buffer overrun detected!", backlog, self.buffer_size_frames)
+        if (backlog > self.max_backlog):
+            self.max_backlog = backlog
+        self.last_frame_number = cur_frame_number
+
+        # Create a list of the new frames.
+        new_frames = []
+        if (cur_buffer_index < self.buffer_index):
+            for i in range(self.buffer_index + 1, self.buffer_size_frames):
+                new_frames.append(i)
+            for i in range(cur_buffer_index + 1):
+                new_frames.append(i)
+        else:
+            for i in range(self.buffer_index, cur_buffer_index):
+                new_frames.append(i+1)
+        self.buffer_index = cur_buffer_index
+
+
+        return new_frames
+
+    def checkStatus(self, fn_return, fn_name="unknown"):
+        """
+        Check return value of the dcam function call.
+        Throw an error if not as expected?
+        """
+        # if (fn_return != DCAMERR_NOERROR) and (fn_return != DCAMERR_ERROR):
+        #    raise DCAMException("dcam error: " + fn_name + " returned " + str(fn_return))
+        if (fn_return == DCAMERR_ERROR):
+            c_buf_len = 80
+            c_buf = ctypes.create_string_buffer(c_buf_len)
+            c_error = self.dcam.dcam_getlasterror(self.camera_handle,
+                                             c_buf,
+                                             ctypes.c_int32(c_buf_len))
+            raise DCAMException(
+                "dcam error " + str(fn_name) + " " + str(c_buf.value))
+            # print "dcam error", fn_name, c_buf.value
+        return fn_return
+
     def grab_frame(self):
         """Retrieve a frame as a 2D numpy array with shape (rows, cols)."""
         # Note: creating the buffer and then "pushing" it at the end has the
