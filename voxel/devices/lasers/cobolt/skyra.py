@@ -150,6 +150,7 @@ class SkyraLaser(BaseLaser):
                            f"no current mA correlates to {value} mW")
         else:
             # convert from mw to watts
+            print('Modulation is off', f'{self._prefix}{Cmd.PowerSetpoint} {value / 1000}')
             self._inst.send_cmd(f'{self._prefix}{Cmd.PowerSetpoint} {value / 1000}')
         self.log.info(f"laser {self._prefix} set to {value} mW")
 
@@ -180,9 +181,9 @@ class SkyraLaser(BaseLaser):
         self.log.info('closing and calling disable')
         self.disable()
         #Failed unit test not sure why
-        # if self._inst.is_connected():
-        #     print('DING TIS')
-        #     self._inst.disconnect()
+        if self._inst.is_connected():
+            print('DING TIS')
+            self._inst.disconnect()
 
     @property
     def power_mw(self) -> float:

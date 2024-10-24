@@ -1,4 +1,7 @@
 import unittest
+import sys
+sys.path.append(r"C:\Users\AIBS\Desktop\UHR-OTLS-control\voxel")
+
 from voxel.devices.lasers.cobolt import SkyraLaser 
 import unittest
 import time
@@ -14,11 +17,12 @@ class TestSkyraLaser(unittest.TestCase):
         }
         cls.laser = SkyraLaser(
             id="28674",
-            port="COM8",
+            port="COM9",
             prefix="1",  # Using a valid prefix ['1', '2', '3', '4']
             max_power_mw=50.0,
             min_current_ma=0.0,
             max_current_ma=100.0,
+            wavelength=561,
             coefficients=cls.coefficients
         )
 

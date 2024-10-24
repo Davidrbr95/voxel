@@ -72,9 +72,13 @@ class Acquisition:
             operation_object = self._construct_class(operation_specs)
 
             # create operation dictionary if it doesn't already exist and add operation to dictionary
+            ## HERE set writers
+            print('Operation name', operation_name)
             if not hasattr(self, operation_type):
+                print('Into IF', operation_type, device_name)
                 setattr(self, operation_type, {device_name: {}})
             elif not getattr(self, operation_type).get(device_name, False):
+                print('into elif', operation_type, device_name)
                 getattr(self, operation_type)[device_name] = {}
             getattr(self, operation_type)[device_name][operation_name] = operation_object
 

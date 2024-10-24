@@ -6,6 +6,7 @@ from voxel.devices.camera.sdks.dcam.dcam import *
 from voxel.descriptors.deliminated_property import DeliminatedProperty
 import ctypes
 import ctypes.util
+import traceback
 
 # DCAM4 API.
 DCAMERR_ERROR = 0
@@ -203,7 +204,6 @@ class Camera(BaseCamera):
 
     @exposure_time_ms.setter
     def exposure_time_ms(self, exposure_time_ms: float):
-
         self.dcam.prop_setvalue(PROPERTIES["exposure_time"], exposure_time_ms / 1000)
         self.log.info(f"exposure time set to: {exposure_time_ms} ms")
         # refresh parameter values
@@ -458,6 +458,7 @@ class Camera(BaseCamera):
         self._latest_frame = None
         self.buffer_index = 0
         self.last_frame_number = 0 
+        # self.reset()
 
     def close(self):
         if self.dcam.is_opened():
@@ -492,9 +493,12 @@ class Camera(BaseCamera):
                be zero. Are frames getting dropped? Some sort of race condition?
         """
         frames = []
-        for n in self.newFrames():
-            frames.append(self.dcam.buf_getframedata(n))
-
+        new_frames = self.newFrames()
+        for n in new_frames:
+            image = self.dcam.buf_getframedata(n)
+            frames.append(image)
+            if n == new_frames[-1]:
+                self._latest_frame  = image
         return frames 
 
     def newFrames(self):
@@ -574,7 +578,8 @@ class Camera(BaseCamera):
         #   pool back to the input pool, so it can be reused.
         timeout_ms = 1000
         if self.dcam.wait_capevent_frameready(timeout_ms) is not False:
-            image = self._latest_frame = self.dcam.buf_getlastframedata()
+            image = self.dcam.buf_getlastframedata()
+            self._latest_frame  = image
             return image
 
     @property
@@ -635,7 +640,7 @@ class Camera(BaseCamera):
         for name, value in globals().items():
             if name.isupper() and isinstance(value, dict):
                 uppercase_dicts[name] = value
-                print(name, value)
+                # print(name, value)
         return uppercase_dicts
 
     def _update_parameters(self):

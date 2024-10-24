@@ -3,11 +3,15 @@ import math
 import sys
 import threading
 import time
+import sys
+
+sys.path.append(r"C:\Users\AIBS\Desktop\UHR-OTLS-control\voxel")
 
 import numpy
 
 from voxel.writers.bdv import BDVWriter
 from voxel.writers.data_structures.shared_double_buffer import SharedDoubleBuffer
+import os
 
 if __name__ == "__main__":
 
@@ -18,7 +22,7 @@ if __name__ == "__main__":
     # Remove any handlers already attached to the root logger.
     logging.getLogger().handlers.clear()
     # logger level must be set to the lowest level of any handler.
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.FATAL)
     fmt = "%(asctime)s.%(msecs)03d %(levelname)s %(name)s: %(message)s"
     datefmt = "%Y-%m-%d,%H:%M:%S"
     log_formatter = logging.Formatter(fmt=fmt, datefmt=datefmt)
@@ -27,17 +31,17 @@ if __name__ == "__main__":
     log_handler.setFormatter(log_formatter)
     logger.addHandler(log_handler)
 
-    chunk_size_frames = 128
+    chunk_size_frames = 64
     num_frames = 256
     num_tiles = 1
 
     stack_writer_worker = BDVWriter(".")
-    stack_writer_worker.row_count_px = 2048
+    stack_writer_worker.row_count_px = 400
     stack_writer_worker.column_count_px = 2048
-    stack_writer_worker.x_voxel_size_um = 0.748
-    stack_writer_worker.y_voxel_size_um = 0.748
-    stack_writer_worker.z_voxel_size_um = 1
-    stack_writer_worker.theta_deg = 45
+    stack_writer_worker.x_voxel_size_um = 0.18
+    stack_writer_worker.y_voxel_size_um = 0.18
+    stack_writer_worker.z_voxel_size_um = 0.18
+    stack_writer_worker.theta_deg = 74
     stack_writer_worker.frame_count_px = num_frames
     stack_writer_worker.compression = "none"
     stack_writer_worker.data_type = "uint16"
@@ -74,37 +78,39 @@ if __name__ == "__main__":
         chunk_lock = threading.Lock()
 
         # Images arrive serialized in repeating channel order.
+        print(num_frames)
+        time.sleep(10)
         for stack_index in range(num_frames):
+            # print(stack_index)
             chunk_index = stack_index % chunk_size_frames
             # Start a batch of pulses to generate more frames and movements.
             if chunk_index == 0:
                 chunks_filled = math.floor(stack_index / chunk_size_frames)
                 remaining_chunks = chunk_count - chunks_filled
             # Grab simulated frame
-            if chunks_filled % 2 == 0:
-                img_buffer.add_image(
-                    numpy.random.randint(
-                        low=0,
-                        high=256,
-                        size=(
-                            stack_writer_worker.row_count_px,
-                            stack_writer_worker.column_count_px,
-                        ),
-                        dtype="uint16",
-                    )
+            img_buffer.add_image(
+                numpy.random.randint(
+                    low=0,
+                    high=256,
+                    size=(
+                        stack_writer_worker.row_count_px,
+                        stack_writer_worker.column_count_px,
+                    ),
+                    dtype="uint16",
                 )
-            else:
-                img_buffer.add_image(
-                    numpy.random.randint(
-                        low=0,
-                        high=32,
-                        size=(
-                            stack_writer_worker.row_count_px,
-                            stack_writer_worker.column_count_px,
-                        ),
-                        dtype="uint16",
-                    )
-                )
+            )
+            # else:
+            #     img_buffer.add_image(
+            #         numpy.random.randint(
+            #             low=0,
+            #             high=32,
+            #             size=(
+            #                 stack_writer_worker.row_count_px,
+            #                 stack_writer_worker.column_count_px,
+            #             ),
+            #             dtype="uint16",
+            #         )
+            #     )
             # mimic 5 fps imaging
             time.sleep(0.05)
             frame_index += 1

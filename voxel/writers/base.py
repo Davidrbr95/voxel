@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Optional
 import numpy
 from voxel.descriptors.deliminated_property import DeliminatedProperty
-
+import traceback
 
 class BaseWriter:
     """
@@ -325,7 +325,7 @@ class BaseWriter:
         :param data_type: Data type
         :type data_type: numpy.unsignedinteger
         """
-
+        # print('Setting data type', data_type)
         self.log.info(f"setting data type to: {data_type}")
         self._data_type = data_type
 
@@ -500,6 +500,7 @@ class BaseWriter:
         self.log.info(f"{self._filename}: waiting to finish.")
         self._process.join()
         # log the finished writer %
+        # print('wait to finish running again')
         self.log.info(f'progress percent: {self.progress}')
 
     @abstractmethod

@@ -290,8 +290,8 @@ class BDVWriter(BaseWriter):
 
         affine_shift = np.array(
             (
-                [1.0, 0.0, 0.0, shift_x],
-                [0.0, 1.0, 0.0, shift_y],
+                [1.0, 0.0, 0.0, shift_y],
+                [0.0, 1.0, 0.0, shift_x],
                 [0.0, 0.0, 1.0, shift_z],
             )
         )
@@ -344,9 +344,11 @@ class BDVWriter(BaseWriter):
         # pyramid subsampling factors xyz
         # TODO CALCULATE THESE AS WITH ZARRV3 WRITER
         subsamp = (
-            (1, 1, 1),
-            (2, 2, 2),
+            (1, 1, 1),  # Level 0
+            (2, 2, 2),  # Level 1
             (4, 4, 4),
+            (8, 8, 8),
+            (16, 16, 16)  # Level 2
         )
         # chunksize xyz
         # blockdim = (
@@ -362,8 +364,8 @@ class BDVWriter(BaseWriter):
             (4, 64, 64),
             (4, 64, 64),
             (4, 64, 64),
-            (4, 64, 64),
-            (4, 64, 64),
+            (4, 32, 32),
+            (4, 16, 16)
         )
         # bdv requires input string not Path
         filepath = str(
@@ -427,8 +429,10 @@ class BDVWriter(BaseWriter):
             while self.done_reading.is_set():
                 sleep(0.001)
             # attach a reference to the data from shared memory.
+            # print('self._data_type', self._data_type)
             shm = SharedMemory(self.shm_name, create=False, size=shm_nbytes)
             frames = np.ndarray(shm_shape, self._data_type, buffer=shm.buf)
+            # print('checking when get frames', frames.dtype)
             shared_log_queue.put(
                 f"{self._filename}: writing chunk "
                 f"{chunk_num+1}/{chunk_total} of size {frames.shape}."
@@ -448,6 +452,7 @@ class BDVWriter(BaseWriter):
                 f"{perf_counter() - start_time:.3f} [s]"
             )
             shm.close()
+            shm.unlink()
             self.done_reading.set()
             # update shared progress value
             shared_progress.value = (chunk_num + 1) / chunk_total

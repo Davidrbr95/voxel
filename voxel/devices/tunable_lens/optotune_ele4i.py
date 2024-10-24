@@ -43,6 +43,7 @@ class TunableLens(BaseTunableLens):
         """Get the tunable lens control mode."""
         self.tunable_lens.reset_input_buffer()
         mode = self.send_command('MMA', '>xxxB')[0]
+        print('Check Mode of ETL', mode)
         if mode == 1:
             return 'internal'
         if mode == 5:
