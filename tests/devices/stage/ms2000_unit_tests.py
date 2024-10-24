@@ -1,3 +1,6 @@
+
+import sys
+sys.path.append(r"C:\Users\ARPA\Desktop\ControlCodes\ARPA-OTLS-control\voxel")
 import unittest
 from voxel.devices.stage.ms2000 import Stage, MS2000ControllerSingleton  # Assuming the class is in a module named stage_module
 import time
@@ -9,7 +12,7 @@ class TestStage(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # Setup a real connection to the MS2000 device.
-        cls.ms2000 = MS2000ControllerSingleton(com_port='COM5', baud_rate=9600)  # Adjust COM port as necessary
+        cls.ms2000 = MS2000ControllerSingleton(com_port='COM7', baud_rate=9600)  # Adjust COM port as necessary
     
     @classmethod
     def tearDownClass(cls):
@@ -18,7 +21,7 @@ class TestStage(unittest.TestCase):
 
     def setUp(self):
         # Initialize the Stage object with real MS2000 controller
-        self.stage = Stage(hardware_axis='X', instrument_axis='x', ms2000=self.ms2000, port = 'COM5')
+        self.stage = Stage(hardware_axis='x', instrument_axis='x', ms2000=self.ms2000, port = 'COM7')
     
     # def test_setup_scan(self):
     #     print('RUN setup scan')
@@ -29,8 +32,9 @@ class TestStage(unittest.TestCase):
     #                      strip_count=1, pattern='raster')
     #     pass
 
-    def test_start_scan(self):
-        self.stage.start()
+    # def test_start_scan(self):
+    #     self.stage.start()
+        
     # def test_stage_initialization(self):
     #     # Ensure the stage is initialized with the correct axis mapping
     #     # NOT SURE IF THIS IS THE CORRECT Expected output for 3rd statement
@@ -51,10 +55,11 @@ class TestStage(unittest.TestCase):
     #     self.stage.move_absolute_mm(target_position, wait=True)
     #     self.assertAlmostEqual(self.stage.position_mm, target_position*1000, places=1)
     
-    # def test_position_mm_getter(self):
-    #     # Test position_mm property getter
-    #     position = self.stage.position_mm
-    #     self.assertIsInstance(position, float)
+    def test_position_mm_getter(self):
+        # Test position_mm property getter
+        position = self.stage.position_mm
+        print('Returned position', position)
+        self.assertIsInstance(position, float)
     
     # def test_position_mm_setter(self):
     #     # Test position_mm property setter

@@ -39,5 +39,4 @@ dependencies = [
     'imohash >= 1.0.5',
     'sympy >= 1.12.1',
     'pycobolt @ git+https://github.com/cobolt-lasers/pycobolt.git',
-    'histogram1d >= 0.14',
 ]
