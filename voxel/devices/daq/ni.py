@@ -93,6 +93,99 @@ class DAQ(BaseDAQ):
         #     self.add_task(task_type[:2], pulse_count)
         self._tasks = tasks_dict
 
+    def write_zeros(self):
+        # Save current configurations and waveforms
+        ao_waveforms_backup = self.ao_waveforms.copy()
+        do_waveforms_backup = self.do_waveforms.copy()
+        # co_waveforms_backup = self.co_waveforms.copy()
+
+        # Write zeros to AO task
+        if self.ao_task is not None:
+            task = self.tasks[f'ao_task']
+            timing = task['timing']
+            trigger_port = timing['trigger_port']
+            total_time_ms = timing['period_time_ms'] + timing['rest_time_ms']
+            # Save original trigger settings
+            ao_retriggerable = self.ao_task.triggers.start_trigger.retriggerable
+
+
+            # Get the shape of the existing AO waveforms
+            ao_voltages = numpy.array(list(self.ao_waveforms.values()))
+            num_channels, num_samples = ao_voltages.shape
+            zero_voltage_array = numpy.zeros((num_channels, num_samples))
+
+            # Disable retriggering and start triggers
+            self.ao_task.triggers.start_trigger.retriggerable = False
+            self.ao_task.triggers.start_trigger.disable_start_trig()
+
+            # Stop the task, write zeros, start and then stop the task
+            self.ao_task.stop()
+            self.ao_task.write(zero_voltage_array)
+            self.ao_task.start()
+            self.ao_task.stop()
+
+            if timing['trigger_mode'] == "on":
+                self.ao_task.timing.cfg_samp_clk_timing(
+                    rate=timing['sampling_frequency_hz'],
+                    active_edge=TRIGGER_POLARITY[timing['trigger_polarity']],
+                    sample_mode=SAMPLE_MODE[timing['sample_mode']],
+                    samps_per_chan=int(((total_time_ms) / 1000) * timing['sampling_frequency_hz']))
+                self.ao_task.triggers.start_trigger.cfg_dig_edge_start_trig(
+                    trigger_source=f'/{self.id}/{trigger_port}',
+                    trigger_edge=TRIGGER_EDGE[timing['trigger_polarity']])
+                self.ao_task.triggers.start_trigger.retriggerable = RETRIGGERABLE[timing['retriggerable']]
+
+        # Handle DO task
+        if self.do_task is not None:
+            # Save original trigger settings
+            task = self.tasks[f'do_task']
+            timing = task['timing']
+            trigger_port = timing['trigger_port']
+            total_time_ms = timing['period_time_ms'] + timing['rest_time_ms']
+            do_retriggerable = self.do_task.triggers.start_trigger.retriggerable
+
+            # Get the shape of the existing DO waveforms
+            do_voltages = numpy.array(list(self.do_waveforms.values()))
+            num_channels, num_samples = do_voltages.shape
+            zero_data_array = numpy.zeros((num_channels, num_samples), dtype='uint32')
+
+            # Disable retriggering and start triggers
+            self.do_task.triggers.start_trigger.retriggerable = False
+            self.do_task.triggers.start_trigger.disable_start_trig()
+
+            # Stop the task, write zeros, start and then stop the task
+            self.do_task.stop()
+            self.do_task.write(zero_data_array)
+            self.do_task.start()
+            self.do_task.stop()
+
+            # Restore trigger settings
+            # self.do_task.triggers.start_trigger.retriggerable = do_retriggerable
+            if timing['trigger_mode'] == "on":
+                self.do_task.timing.cfg_samp_clk_timing(
+                    rate=timing['sampling_frequency_hz'],
+                    active_edge=TRIGGER_POLARITY[timing['trigger_polarity']],
+                    sample_mode=SAMPLE_MODE[timing['sample_mode']],
+                    samps_per_chan=int(((total_time_ms) / 1000) * timing['sampling_frequency_hz']))
+                self.do_task.triggers.start_trigger.cfg_dig_edge_start_trig(
+                    trigger_source=f'/{self.id}/{trigger_port}',
+                    trigger_edge=TRIGGER_EDGE[timing['trigger_polarity']])
+                self.do_task.triggers.start_trigger.retriggerable = RETRIGGERABLE[timing['retriggerable']]
+
+        # Reconfigure AO task
+        if self.ao_task is not None:
+            self.ao_waveforms = ao_waveforms_backup
+            # Write the original waveforms back to the AO task
+            self.write_ao_waveforms()
+            # Do not start the task
+
+        # Reconfigure DO task
+        if self.do_task is not None:
+            self.do_waveforms = do_waveforms_backup
+            # Write the original waveforms back to the DO task
+            self.write_do_waveforms()
+        #     # Do not start the task
+
     def add_task(self, task_type: str, pulse_count=None):
 
         # check task type
@@ -120,6 +213,7 @@ class DAQ(BaseDAQ):
             self._timing_checks(task_type)
 
             trigger_port = timing['trigger_port']
+            print('Setting trigger port ', trigger_port)
             # if f"{self.id}/{trigger_port}" not in self.dio_ports:
             #     raise ValueError("trigger port must be one of %r." % self.dio_ports)
 
@@ -431,14 +525,14 @@ class DAQ(BaseDAQ):
                                      int(self.ao_total_time_ms / 1000 * self.ao_sampling_frequency_hz))
             for waveform in self.ao_waveforms:
                 plt.plot(time_ms, self.ao_waveforms[waveform], label=waveform)
-        if self.do_waveforms:
-            time_ms = numpy.linspace(0,
-                                     self.do_total_time_ms,
-                                     int(self.do_total_time_ms / 1000 * self.do_sampling_frequency_hz))
-            for waveform in self.do_waveforms:
-                plt.plot(time_ms, self.do_waveforms[waveform], label=waveform)
+        # if self.do_waveforms:
+        #     time_ms = numpy.linspace(0,
+        #                              self.do_total_time_ms,
+        #                              int(self.do_total_time_ms / 1000 * self.do_sampling_frequency_hz))
+        #     for waveform in self.do_waveforms:
+        #         plt.plot(time_ms, self.do_waveforms[waveform], label=waveform)
 
-        plt.axis([0, numpy.max([self.ao_total_time_ms, self.do_total_time_ms]), -0.2, 5.2])
+        plt.axis([0, numpy.max([self.ao_total_time_ms]), -0.2, 5.2])
         ax.xaxis.set_minor_locator(AutoMinorLocator())
         ax.yaxis.set_minor_locator(AutoMinorLocator())
         ax.spines[['right', 'top']].set_visible(False)
