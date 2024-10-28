@@ -188,10 +188,10 @@ class BdvBase:
         --------
             down-scaled stack, unit16 type.
         """
-        if all(subsamp_level[:] == 1):
-            stack_sub = stack
-        else:
-            stack_sub = skimage.transform.downscale_local_mean(stack, tuple(subsamp_level)).astype(np.uint16)
+        # if all(subsamp_level[:] == 1):
+        #     stack_sub = stack
+        # else:
+        stack_sub = skimage.transform.downscale_local_mean(stack, tuple(subsamp_level)).astype(np.uint16)
         return stack_sub
 
     def _write_pyramids_header(self):
@@ -454,7 +454,8 @@ class BdvWriter(BdvBase):
             dataset = self._file_object_h5[group_name]["cells"]
             # change subsampling to ingest the previous pyramid and not _subsample_stack function
             if ilevel > 0:
-                substack = self.gpu_binning.run(substack).astype('int16')
+                substack = self._subsample_stack(substack, (2,2,2)).astype('int16')
+                # substack = self.gpu_binning.run(substack).astype('int16')
             sub_z_start = int(z_start/2**ilevel)
             sub_y_start = int(y_start/2**ilevel)
             sub_x_start = int(x_start/2**ilevel)
@@ -521,7 +522,8 @@ class BdvWriter(BdvBase):
             else:
                 grp = self._file_object_h5.create_group(group_name)
                 if stack is not None:
-                    stack = self.gpu_binning.run(stack).astype('int16')
+                    stack = self._subsample_stack(stack, (2,2,2)).astype('int16')
+                    # stack = self.gpu_binning.run(stack).astype('int16')
                     grp.create_dataset('cells', data=stack, chunks=self.chunks[ilevel],
                                        maxshape=(None, None, None), compression=self.compression, compression_opts=self.compression_opts, dtype='int16')
                 else:  # a virtual stack initialized

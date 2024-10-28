@@ -10,7 +10,7 @@ from time import perf_counter, sleep
 from multiprocessing import Event, Queue, Value
 
 import numpy as np
-
+import traceback
 from voxel.writers.base import BaseWriter
 from voxel.writers.bdv_writer import npy2bdv
 from voxel.descriptors.deliminated_property import DeliminatedProperty
@@ -268,7 +268,7 @@ class BDVWriter(BaseWriter):
         # normalized scaling in z (scan)
         scale_z = size_z / size_y
         # shearing based on theta and y/z pixel sizes
-        shear = -np.tan(self._theta_deg * np.pi / 180.0) * size_y / size_z
+        shear = np.tan(self._theta_deg * np.pi / 180.0) * size_y / size_z
         # shift tile in x, unit pixels
         shift_x = scale_x * (self._x_position_mm * 1000 / size_x)
         # shift tile in y, unit pixels

@@ -598,7 +598,11 @@ class Camera(BaseCamera):
         if out_buffer_size > self.buffer_size_frames:
             new_dropped_frames = out_buffer_size - self.buffer_size_frames
             self.dropped_frames += new_dropped_frames
-        frame_rate = out_buffer_size/(self.post_frame_time - self.pre_frame_time)
+        time_diff = (self.post_frame_time - self.pre_frame_time)
+        if time_diff > 0:
+            frame_rate = out_buffer_size / time_diff
+        else:
+            frame_rate = 1/(self.exposure_time_ms/1000)
         # determine bits to bytes
         if self.pixel_type == 'mono8':
             bit_to_byte = 1
@@ -620,7 +624,7 @@ class Camera(BaseCamera):
                       f"dropped: {state['Dropped Frames']}, "
                       f"data rate: {state['Data Rate [MB/s]']:.2f} [MB/s], "
                       f"frame rate: {state['Frame Rate [fps]']:.2f} [fps].")
-        self.pre_frame_time = time.time()
+        self.pre_frame_time = self.post_frame_time
         self.pre_frame_count_px = cap_info.nFrameCount
 
         return state
