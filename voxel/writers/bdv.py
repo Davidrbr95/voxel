@@ -251,14 +251,21 @@ class BDVWriter(BaseWriter):
         # Add voxel size to dictionary with key (tile#, channel#)
         # effective voxel size in x direction
         size_x = self._x_voxel_size_um
+
         # effective voxel size in y direction
+        ## notice modifications
         size_y = self._y_voxel_size_um * np.cos(self.theta_deg * np.pi / 180.0)
+
         # effective voxel size in z direction (scan)
         size_z = self._z_voxel_size_um
+
         voxel_sizes = (size_z, size_y, size_x)
         self.voxel_size_dict[(self.current_tile_num, self.current_channel_num)] = (
             voxel_sizes
         )
+
+        print('size_x', size_x, 'size_y', size_y, 'size_z', size_z)
+        print('_x_position_mm', self._x_position_mm, '_y_position_mm', self._y_position_mm, '_z_position_mm', self._z_position_mm)
 
         # Create affine matrix dictionary with key (tile#, channel#)
         # normalized scaling in x
@@ -291,8 +298,8 @@ class BDVWriter(BaseWriter):
         affine_shift = np.array(
             (
                 [1.0, 0.0, 0.0, shift_y],
-                [0.0, 1.0, 0.0, shift_x],
-                [0.0, 0.0, 1.0, shift_z],
+                [0.0, 1.0, 0.0, shift_z],
+                [0.0, 0.0, 1.0, shift_x],
             )
         )
 
