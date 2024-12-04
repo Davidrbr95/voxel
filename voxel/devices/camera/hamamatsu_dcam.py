@@ -197,6 +197,7 @@ class Camera(BaseCamera):
         # initialize parameter values
         self._update_parameters()
 
+
     @DeliminatedProperty(minimum=float('-inf'), maximum=float('inf'))
     def exposure_time_ms(self):
         # us to ms conversion
@@ -452,8 +453,8 @@ class Camera(BaseCamera):
         self.stop()
 
     def stop(self):
-        self.dcam.buf_release()
         self.dcam.cap_stop()
+        self.dcam.buf_release()
         self.max_backlog = 0
         self._latest_frame = None
         self.buffer_index = 0

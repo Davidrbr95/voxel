@@ -176,13 +176,13 @@ class BDVWriter(BaseWriter):
             if os.name != "nt":
                 raise ValueError("b3d compression is only supported on windows")
             # check for hdf5 version
-            try:
-                import hdf5
-            except ValueError:
-                raise "hdf5 is not installed"
-            hdf5_ver = hdf5.__version__
-            if int(hdf5_ver[hdf5_ver.find(".") + 1]) > 8:
-                raise ValueError("b3d compression is only supported for hdf5 1.8.xx")
+            # try:
+            #     import hdf5
+            # except ValueError:
+            #     raise "hdf5 is not installed"
+            # hdf5_ver = hdf5.__version__
+            # if int(hdf5_ver[hdf5_ver.find(".") + 1]) > 8:
+            #     raise ValueError("b3d compression is only supported for hdf5 1.8.xx")
             self.compression_opts = (
                 int(B3D_QUANT_SIGMA * 1000),
                 B3D_COMPRESSION_MODE,
@@ -259,7 +259,7 @@ class BDVWriter(BaseWriter):
         # effective voxel size in z direction (scan)
         size_z = self._z_voxel_size_um
 
-        voxel_sizes = (size_z, size_y, size_x)
+        voxel_sizes = (size_x, size_y, size_z)
         self.voxel_size_dict[(self.current_tile_num, self.current_channel_num)] = (
             voxel_sizes
         )
@@ -279,9 +279,9 @@ class BDVWriter(BaseWriter):
         # shift tile in x, unit pixels
         shift_x = scale_x * (self._x_position_mm * 1000 / size_x)
         # shift tile in y, unit pixels
-        shift_y = scale_y * (self._y_position_mm * 1000 / size_y)
+        shift_y = -1*scale_y * (self._y_position_mm * 1000 / size_y)
         # shift tile in y, unit pixels
-        shift_z = scale_z * (self._z_position_mm * 1000 / size_z)
+        shift_z = -1*scale_z * (self._z_position_mm * 1000 / size_z)
 
         affine_deskew = np.array(
             ([1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, shear, 1.0, 0.0])
