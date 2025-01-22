@@ -550,7 +550,8 @@ class Camera(BaseCamera):
             for i in range(self.buffer_index, cur_buffer_index):
                 new_frames.append(i+1)
         self.buffer_index = cur_buffer_index
-
+        if backlog>1:
+            print('Backlog at camera', backlog)
 
         return new_frames
 

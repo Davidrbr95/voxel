@@ -116,7 +116,7 @@ class Stage(BaseStage):
                          slow_axis_start_position: float,
                          slow_axis_stop_position: float,
                          frame_count: int, frame_interval_um: float,
-                         strip_count: int, pattern: str,
+                         strip_count: int, pattern: str, scan_stop_mm: float
                          ):
         if self.mode == 'stage scan':
             valid_pattern = list(SCAN_PATTERN.keys())
@@ -137,12 +137,14 @@ class Stage(BaseStage):
             #     key for key, value in axis_to_card.items() if value[0] == fast_card and value[1] != fast_position)
             # Stop any existing scan. Apply machine coordinate frame scan params.
             
+            print('fast axiss [fast axis position], [frame interal um], [frame_count]', fast_axis_start_position, frame_interval_um, frame_count)
             self.log.debug(f"fast axis start: {fast_axis_start_position},"
                            f"slow axis start: {slow_axis_start_position}")
             self.ms2000.setup_scan(fast_axis, slow_axis, slow_axis_second,
                                      pattern=SCAN_PATTERN[pattern], )
             self.ms2000.scanr(scan_start_mm=fast_axis_start_position,
                                 pulse_interval_um=frame_interval_um,
+                                scan_stop_mm = scan_stop_mm,
                                 num_pixels=frame_count, retrace_speed_percent=None)
             self.ms2000.scanv(scan_start_mm=slow_axis_start_position,
                                 scan_stop_mm=slow_axis_stop_position,

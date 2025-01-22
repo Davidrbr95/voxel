@@ -73,7 +73,7 @@ class Instrument:
         module = device_specs['module']
         init = device_specs.get('init', {})
         device_object = self._load_device(driver, module, init, lock)
-        properties = device_specs.get('properties', {})
+        properties = device_specs.get('properties', {}) # originally properties
         self._setup_device(device_object, properties)
 
         # create device dictionary if it doesn't already exist and add device to dictionary

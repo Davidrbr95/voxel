@@ -4,7 +4,7 @@ import serial
 from voxel.devices.tunable_lens.base import BaseTunableLens
 import time
 # constants for Optotune EL-E-4i controller
-SWITCH_TIME  = 1
+SWITCH_TIME  = 0.5
 
 MODES = {
     "external": ['MwDA', '>xxx'],
