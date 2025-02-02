@@ -38,7 +38,7 @@ class KDC101Controller(BaseTunableLens):
         # Load the Kinesis library
         self._load_library()
         self.connect()
-        self.home()
+        # self.home()
 
     def _load_library(self):
         """
@@ -88,7 +88,7 @@ class KDC101Controller(BaseTunableLens):
         print("Homing completed.")
 
     @property
-    def position(self) -> float:
+    def position_mm(self) -> float:
         """
         Retrieves the current position of the device in real units.
 
@@ -102,8 +102,8 @@ class KDC101Controller(BaseTunableLens):
         self.log.info(f"Current position: {real_pos} mm")
         return real_pos
 
-    @position.setter
-    def position(self, position):
+    @position_mm.setter
+    def position_mm(self, position):
         """
         Moves the device to the specified real position.
 

@@ -452,12 +452,9 @@ class ImarisWriter(BaseWriter):
             microscope_version: str, optional
             user_name: str, optional
         """
-        print(filename)
         self.filename_xml = filename
         self.filename_xml = self.filename_xml.with_suffix('.xml')
-        print(self.filename_xml)
         filename = filename.with_suffix('.zarr')
-        print(filename, self.filename_xml)
         try:
             # check if tile position already exists
             self.current_tile_num = self.tile_list.index(

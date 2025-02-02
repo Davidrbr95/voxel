@@ -20,6 +20,7 @@ AO_WAVEFORMS = [
     'square wave',
     'sawtooth',
     'triangle wave'
+    'lineoffset'
 ]
 
 TRIGGER_MODE = [
@@ -347,7 +348,24 @@ class DAQ(BaseDAQ):
                                             max_volts,
                                             min_volts
                                             )
-
+            if waveform == 'lineoffset':
+                try:
+                    max_volts = channel['parameters']['max_volts']['channels'][wavelength] if task_type == 'ao' else 5
+                    if max_volts > self.max_ao_volts:
+                        raise ValueError(f"max volts must be < {self.max_ao_volts} volts")
+                    min_volts = channel['parameters']['min_volts']['channels'][wavelength] if task_type == 'ao' else 0
+                    if min_volts < self.min_ao_volts:
+                        raise ValueError(f"min volts must be > {self.min_ao_volts} volts")
+                except AttributeError:
+                    raise ValueError("missing input parameter for square wave")
+                voltages = self.square_wave(timing['sampling_frequency_hz'],
+                                            timing['period_time_ms'],
+                                            start_time_ms,
+                                            end_time_ms,
+                                            timing['rest_time_ms'],
+                                            max_volts,
+                                            max_volts
+                                            )
             if waveform == 'sawtooth' or waveform == 'triangle wave':  # setup is same for both waves, only be ao task
                 try:
                     amplitude_volts = channel['parameters']['amplitude_volts']['channels'][wavelength]

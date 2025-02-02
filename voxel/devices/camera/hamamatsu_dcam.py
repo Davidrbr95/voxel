@@ -49,7 +49,11 @@ DCAMCAP_START_SNAP = 0
 
 DCAMBUF_ATTACHKIND_FRAME = 0
 
-BUFFER_SIZE_MB = 2400
+# BUFFER_SIZE_MB = 2400
+BUFFER_SIZE_MB = 50000
+
+# 2048 px * 128 px * 16 bits / 2 * 10 cm / (2.2727 um/px) ~ 23 GB
+# 2048 px * 32 px * 16 bits / 2 * 10 cm / (2.2727 um/px) ~ 5.7 GB
 
 # subarray parameter values
 SUBARRAY_OFF = 1
@@ -175,8 +179,9 @@ class Camera(BaseCamera):
         # self.number_image_buffers = 0
         self.max_backlog = 0
         self.buffer_index = 0
-
-        if DcamapiSingleton.init() is not False:
+        DcamapiSingleton.init()
+        print('Starting camera initialization')
+        if True:#DcamapiSingleton.init() is not False:
             num_cams = DcamapiSingleton.get_devicecount()
             for cam in range(0, num_cams):
                 dcam = Dcam(cam)
@@ -188,9 +193,6 @@ class Camera(BaseCamera):
                     # open camera
                     self.dcam.dev_open()
                     break
-                else:
-                    self.log.error(f"no camera found for S/N: {self.id}")
-                    raise ValueError(f"no camera found for S/N: {self.id}")
             del dcam
         else:
             self.log.error('DcamapiSingleton.init() fails with error {}'.format(DCAMERR(DcamapiSingleton.lasterr()).name))
