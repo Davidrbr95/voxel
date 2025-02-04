@@ -36,12 +36,21 @@ class Acquisition:
         # TODO: Validation of config should check that metadata exists and only one
         self.metadata = self._construct_class(self.config['acquisition']['metadata'])
         self.acquisition_name = None    # initialize acquisition_name that will be populated at start of acquisition
-
+        self._active_camera = None
         # initialize operations
         for operation_type, operation_dict in self.config['acquisition']['operations'].items():
             setattr(self, operation_type, dict())
             self._construct_operations(operation_type, operation_dict)
 
+    @property
+    def active_camera(self) -> str:
+        """Active camera name for the entire acquisition."""
+        return self._active_camera
+
+    @active_camera.setter
+    def active_camera(self, camera_name: str):
+        self._active_camera = camera_name
+        
     def _load_class(self, driver: str, module: str, kwds: dict = dict()):
         """Load in device based on config. Expecting driver, module, and kwds input"""
         self.log.info(f'loading {driver}.{module}')
