@@ -3,6 +3,9 @@ from enum import Enum
 from typing import Union
 from functools import cache, wraps
 import logging
+import time
+import traceback
+
 
 MM_SCALE = 4
 DEFAULT_SPEED_PERCENT = 50
@@ -110,7 +113,7 @@ class MS2000(SerialPort):
                 dict_reply[words[0]] = val
         return dict_reply
     
-    def __init__(self, com_port: str, baud_rate: int=115200, report: str=True):
+    def __init__(self, com_port: str, baud_rate: int=28800, report: str=True):
         super().__init__(com_port, baud_rate, report)
         # validate baud_rate input
         if baud_rate in self.BAUD_RATES:
@@ -331,6 +334,7 @@ class MS2000(SerialPort):
         # Clear card address for which the scan settings were specified.
         self._scan_card_addr = None
         self._scan_fast_axis = None
+        # self.start_report_xz()
         self._set_cmd_args_and_kwds("SCAN", ScanState.START.value,
                                     wait=wait, card_address=None)
     @axis_check()
@@ -363,6 +367,7 @@ class MS2000(SerialPort):
         args_str = "".join([f" {a.upper()}" for a in args])
         kwds_str = "".join([f" {a.upper()}={v}" for a, v in kwds.items()])
         cmd_str = f"{card_addr_str}{cmd}{args_str}{kwds_str}\r"
+        print('CMD', cmd_str)
         self.send_command(cmd_str)
         response = self.read_response()
         return response
@@ -399,6 +404,47 @@ class MS2000(SerialPort):
                                f"the following firmware modules: "
                                f"{missing_modules}")
 
+    def report_test(self) -> None:
+        self.send_command(f"RT X=10")
+        self.read_response()
+        time.sleep(0.001)
+        self.send_command(f"RM Y=5")
+        self.read_response()
+        time.sleep(0.001)
+        start_time = time.time()
+        self.send_command(f"RT M+")
+        # self.start_scan()
+        time.sleep(0.001)
+        self.read_response()
+        # new_time = start_time
+        # while new_time-start_time <= 10:
+        #     new_time = time.time()
+        #     print(new_time-start_time)
+        #     self.read_response_linebyline()
+        # time.sleep(10)
+        # self.send_command(f"RT M-")
+        # self.read_response()
+        # print("Should be stopped by now...")
+
+
+    def setup_report_xz(self) -> None:
+        self.send_command(f"RT X=10")
+        self.read_response()
+        time.sleep(0.001)
+        self.send_command(f"RM Y=5")
+        self.read_response()
+        time.sleep(0.001)
+    
+
+    def start_report_xz(self) -> None:
+        self.send_command(f"RT M+")
+
+
+    def set_TTL(self, y=3) -> None:
+        """Move the stage with a relative move."""
+        self.send_command(f"TTL Y={y}\r")
+        self.read_response()
+
     def moverel(self, x: int=0, y: int=0, z: int=0) -> None:
         """Move the stage with a relative move."""
         self.send_command(f"MOVREL X={x} Y={y} Z={z}\r")
@@ -421,6 +467,7 @@ class MS2000(SerialPort):
  
     def set_max_speed(self, axis: str, speed:int) -> None:
         """Set the speed on a specific axis. Speed is in mm/s."""
+        print(f"SPEED {axis}={speed}\r")
         self.send_command(f"SPEED {axis}={speed}\r")
         response = self.read_response()
     
@@ -438,9 +485,39 @@ class MS2000(SerialPort):
  
     def get_position_um(self, axis: str) -> float:
         """Return the position of the stage in microns."""
-        self.send_command(f"WHERE {axis}\r")
+        # self.send_command(f"WHERE {axis} X Z\r")
+        self.send_command(f"WHERE X Y Z\r")
+        # self.send_command(f"WHERE {axis} Z\r")
+        # self.send_command(f"WHERE {axis}\r")
         response = self.read_response()
-        return float(response.split(" ")[1])/10.0
+        # print('R', axis, 'Z', response)
+        # print(traceback.print_stack(s))
+        pos = {'X':1, 'Y':2, 'Z': 3}
+        self.log.info("Response to position ask: %s", response)
+        # print(response, axis)
+        return float(response.split(" ")[pos[axis]])/10.0
+
+        # self.send_command(f"WHERE {axis}\r")
+        # response = self.read_response()
+        # return float(response.split(" ")[1])/10.0
+    
+    def get_xz_position_mm(self) -> float:
+        """Return the position of the stage in mm for x and z"""
+        self.send_command(f"WHERE X Z\r")
+        response = self.read_response()
+        print(response)
+        return float(response.split(" ")[1])/10000.0, float(response.split(" ")[2])/10000.0
+    
+        # response = None
+        # while response is None:
+        #     print('WAITING FOR X Z')
+        #     self.send_command(f"WHERE X Z\r")
+        #     response = self.read_response()
+        #     if response == '\r\n' or response == '\r:' or len(response.split(" "))<3:
+        #         time.sleep(0.001)
+        #         response = None
+        #     print('X Z Res', response)
+        # return float(response.split(" ")[1])/10000.0, float(response.split(" ")[2])/10000.0
     
     def get_backlash(self, axis: str):
         """Return the backslash of the stage in mm."""
@@ -524,3 +601,82 @@ class MS2000(SerialPort):
             axis_to_card[axis] = (hex_addr, card_index)
             curr_card_index[hex_addr] = card_index + 1
         return axis_to_card
+
+    def ring_buffer_remaining(self, axis: str = "X") -> int:
+        """
+        Query how many positions remain in the ring buffer for the given axis.
+        Example command:  RM X?
+        Typical reply:     :A X=5
+        Parses out the integer (5 in this example).
+        
+        :param axis: Single axis label, e.g. 'X'.
+        :return:     Number of positions remaining in the ring buffer.
+        """
+        cmd = f"RM {axis.upper()}?\r"
+        self.send_command(cmd)
+        reply = self.read_response()  # e.g. ':A X=5'
+        self.check_reply_for_errors(reply)
+        # reply usually looks like ':A X=5\n'
+        parts = reply.strip().split()   # -> [':A', 'X=5']
+        if len(parts) < 2 or '=' not in parts[-1]:
+            raise ValueError(f"Unexpected reply format: {reply}")
+        val_str = parts[-1].split('=')[-1]
+        return int(val_str)
+    
+    def ring_buffer_setup_consumer(
+        self,
+        axis: str = "Y",
+        axis_value: int = 4,
+        consumer_mode: int = 0
+    ) -> None:
+        """
+        Setup a ring-buffer consumer on the specified axis (or axis index),
+        and specify the mode (0 => 'consumer' mode).
+        Example command:   RM Y=4 F=0
+        
+        :param axis:         Which axis label to assign the ring buffer to (e.g. 'Y').
+        :param axis_value:   Internal axis index in ASI’s ring buffer nomenclature.
+        :param consumer_mode: 0 for consumer mode.
+        """
+        # Example usage:  RM Y=4 F=0
+        cmd = f"RM X=0 {axis.upper()}={axis_value} F={consumer_mode}\r"
+        self.send_command(cmd)
+        reply = self.read_response()
+        self.check_reply_for_errors(reply)
+
+    def ring_buffer_load_position(self, axis: str, position_mm: float) -> None:
+        """
+        Load the position of the given axis into the ring buffer.
+        The input is in millimeters; it will be converted internally
+        to ASI units (tenths of microns). For example:
+        
+            1.0 mm -> 1000 µm -> 10,000 in tenths-of-microns
+        
+        Example command:  LD Z=10000
+
+        :param axis:        e.g. 'Z'.
+        :param position_mm: stage position in millimeters.
+        """
+        # Convert mm --> 0.1 µm (ASI units)
+        # 1 mm = 1000 µm => 10000 (tenths of a micron)
+        position_asi = int(round(position_mm * 10000)) 
+
+        cmd = f"LD {axis.upper()}={position_asi}\r"
+        self.send_command(cmd)
+        reply = self.read_response()
+        self.check_reply_for_errors(reply)
+
+    
+    def set_ttl_input(self, axis: str = "X", value: int = 1) -> None:
+        """
+        Set the TTL input line for the given axis to a particular mode/value.
+        Example command:  TTL X=1
+
+        :param axis: e.g. 'X'
+        :param value: integer parameter for the TTL command.
+        """
+        cmd = f"TTL {axis.upper()}={value}\r"
+        self.send_command(cmd)
+        reply = self.read_response()
+        self.check_reply_for_errors(reply)
+

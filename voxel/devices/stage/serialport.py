@@ -88,6 +88,14 @@ class SerialPort:
     def read_response(self) -> str:
         """Read a line from the serial response."""
         response = self.serial_port.readline()
+        # response = self.serial_port.readall()
+        response = response.decode(encoding="ascii")
+        # self.print(f"Recv: {response.strip()}")
+        return response # in case we want to read the response
+    
+    def read_response_linebyline(self) -> str:
+        """Read a line from the serial response."""
+        response = self.serial_port.read()
         response = response.decode(encoding="ascii")
         # self.print(f"Recv: {response.strip()}")
         return response # in case we want to read the response

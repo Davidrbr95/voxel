@@ -11,6 +11,11 @@ from nidaqmx.constants import AcquisitionType as AcqType
 from nidaqmx.constants import Edge
 from nidaqmx.constants import Slope
 from nidaqmx.constants import TaskMode
+from nidaqmx.system import System
+from nidaqmx.errors import DaqError
+
+
+
 
 DO_WAVEFORMS = [
     'square wave'
@@ -188,7 +193,10 @@ class DAQ(BaseDAQ):
         #     # Do not start the task
 
     def add_task(self, task_type: str, pulse_count=None):
-
+        # print(
+        #     'NI DAQ add task function'
+        # )
+        # print(self.tasks)
         # check task type
         if task_type not in ['ao', 'co', 'do']:
             raise ValueError(f"{task_type} must be one of {['ao', 'co', 'do']}")
@@ -196,8 +204,11 @@ class DAQ(BaseDAQ):
         task = self.tasks[f'{task_type}_task']
 
         if old_task := getattr(self, f"{task_type}_task", False):
-            old_task.close()  # close old task
+            # print('deleting old')
+            # old_task.close()  # close old task
             delattr(self, f"{task_type}_task")  # Delete previously configured tasks
+        # print('task,', task)
+        # print('task name', task['name'])
         daq_task = nidaqmx.Task(task['name'])
         timing = task['timing']
 

@@ -495,6 +495,7 @@ class Dcam:
         aFrame.height = self.__bufframe.height
 
         ret = self.__result(dcambuf_copyframe(self.__hdcam, byref(aFrame)))
+        # ret = self.__result(dcambuf_lockframe(self.__hdcam, byref(aFrame)))
         if ret is False:
             return False
 

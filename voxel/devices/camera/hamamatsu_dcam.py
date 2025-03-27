@@ -49,7 +49,7 @@ DCAMCAP_START_SNAP = 0
 
 DCAMBUF_ATTACHKIND_FRAME = 0
 
-# BUFFER_SIZE_MB = 2400
+# BUFFER_SIZE_MB = 2000
 BUFFER_SIZE_MB = 50000
 
 # 2048 px * 128 px * 16 bits / 2 * 10 cm / (2.2727 um/px) ~ 23 GB
@@ -79,7 +79,10 @@ PROPERTIES = {
     "subarray_vsize": 4202816,  # 0x00402140, R/W, long,   "SUBARRAY VSIZE"
     "subarray_mode": 4202832,  # 0x00402150, R/W, mode,    "SUBARRAY MODE"
     "pixel_type": 4326000,  # 0x00420270, R/W, DCAM_PIXELTYPE,   # "IMAGE PIXEL TYPE"
-    "sensor_temperature": 2097936  # 0x00200310, R/O, celsius,"SENSOR TEMPERATURE"
+    "sensor_temperature": 2097936,  # 0x00200310, R/O, celsius,"SENSOR TEMPERATURE",
+    "defectcorrect_mode": 4653072, # 0x00470010, R/W, mode,  "DEFECT CORRECT MODE"
+    "readoutspeed": 4194576,  # 0x00400110, R/W, long,    "READOUT SPEED"
+    "internaltrigger_handling": 1049200,
 }
 
 # generate valid pixel types by querying dcam
@@ -176,7 +179,7 @@ class Camera(BaseCamera):
         self.id = str(id) # convert to string incase serial # is entered as int
         self._latest_frame = None
         self.last_frame_number = 0 
-        # self.number_image_buffers = 0
+        self.number_image_buffers = 0
         self.max_backlog = 0
         self.buffer_index = 0
         DcamapiSingleton.init()
@@ -269,6 +272,15 @@ class Camera(BaseCamera):
         # print('Setting', value)
         self.dcam.prop_setvalue(PROPERTIES["subarray_vpos"], value)   
         time.sleep(0.1)
+    
+    @property
+    def internaltrigger_handling(self):
+        return int(self.dcam.prop_getvalue(PROPERTIES["internaltrigger_handling"]))
+
+    @internaltrigger_handling.setter
+    def internaltrigger_handling(self, value: int):
+        self.dcam.prop_setvalue(PROPERTIES["internaltrigger_handling"], value)   
+        time.sleep(0.1)
 
     @property
     def pixel_type(self):
@@ -309,7 +321,7 @@ class Camera(BaseCamera):
             return (self.line_interval_us * self.height_px)/1000 + self.exposure_time_ms
         else:
             return (self.line_interval_us * self.height_px/2)/1000 + self.exposure_time_ms
-            
+
     @property
     def trigger(self):
 
@@ -345,6 +357,7 @@ class Camera(BaseCamera):
 
         # TODO figure out TRIGGERACTIVE bool
         self.dcam.prop_setvalue(PROPERTIES["trigger_mode"], TRIGGERS['mode'][mode])
+        print("This is mode...........", mode)
         self.dcam.prop_setvalue(PROPERTIES["trigger_source"], TRIGGERS['source'][source])
         self.dcam.prop_setvalue(PROPERTIES["trigger_polarity"], TRIGGERS['polarity'][polarity])
         self.dcam.prop_setvalue(PROPERTIES["trigger_active"], TRIGGERS['active'][active])
@@ -425,12 +438,27 @@ class Camera(BaseCamera):
             bit_to_byte = 1
         else:
             bit_to_byte = 2
+        self.defectcorrect()
         self.setSubArrayMode()
+        self.readoutspeed()
         frame_size_mb = self.width_px*self.height_px/self.binning**2*bit_to_byte/1e6
         self.buffer_size_frames = round(BUFFER_SIZE_MB / frame_size_mb)
         # realloc buffers appears to be allocating ram on the pc side, not camera side.
         self.dcam.buf_alloc(self.buffer_size_frames)
+        self.number_image_buffers = self.buffer_size_frames
         self.log.info(f"buffer set to: {self.buffer_size_frames} frames")
+
+    def defectcorrect(self, defect = False):
+        if defect:
+            self.dcam.prop_setvalue(PROPERTIES["defectcorrect_mode"], SUBARRAY_OFF)
+        else:
+            self.dcam.prop_setvalue(PROPERTIES["defectcorrect_mode"], SUBARRAY_ON)
+
+    def readoutspeed(self, mode = 0x7FFFFFFF):
+        if mode == 1:
+            self.dcam.prop_setvalue(PROPERTIES["readoutspeed"], 1)
+        else:
+            self.dcam.prop_setvalue(PROPERTIES["readoutspeed"], 0x7FFFFFFF)
 
     def start(self, frames = GENTL_INFINITE):
         # initialize variables for acquisition run
@@ -455,6 +483,8 @@ class Camera(BaseCamera):
         self.stop()
 
     def stop(self):
+        status = self.dcam.cap_status()
+        print("Camera Status Before Stopping:", status)
         self.dcam.cap_stop()
         self.dcam.buf_release()
         self.max_backlog = 0
@@ -463,13 +493,22 @@ class Camera(BaseCamera):
         self.last_frame_number = 0 
         # self.reset()
 
+        # Hardcoding to reset the trigger, not the best ideal way
+        # Ideal way would be using the reset()...
+        self.dcam.prop_setvalue(PROPERTIES["trigger_mode"], TRIGGERS['mode']['normal'])
+        self.dcam.prop_setvalue(PROPERTIES["trigger_mode"], TRIGGERS['mode']['start'])
+
+        status = self.dcam.cap_status()
+        print("Camera Status After Stopping:", status)
+
     def close(self):
         if self.dcam.is_opened():
             self._latest_frame = None
             self.last_frame_number = 0 
             self.max_backlog = 0
             self.buffer_index = 0
-            self.dcam.dev_close()
+            if self.decam is not None:
+                self.dcam.dev_close()
             DcamapiSingleton.uninit()
 
     def reset(self):
@@ -485,6 +524,94 @@ class Camera(BaseCamera):
                 self.dcam = Dcam(self.cam_num)
                 self.dcam.dev_open()
     
+    def getFrame(self):
+        """
+        Returns exactly one new frame from the camera buffer (as a NumPy array),
+        or None if there are no more frames available (camera stopped).
+        
+        This will block until at least one new frame is ready if the camera
+        is still running. 
+        """
+        # Grab the next unread index (or None if none is available).
+        idx = self.nextFrameIndex()
+        if idx is None:
+            # No more frames or camera is done.
+            return None
+
+        # Retrieve the frame data from that buffer index.
+        # t0 = time.perf_counter()
+        frame_data = self.dcam.buf_getframedata(idx)  
+        # t1 = time.perf_counter()
+        
+        self._latest_frame = frame_data
+        # self.log.info("HCAM buf_getframedata() took: %.6f seconds", (t1 - t0))
+        return frame_data
+
+
+    def nextFrameIndex(self):
+        """
+        Return the index (integer) of the *oldest unread* frame currently in the
+        camera buffer. If no frames are available and the camera is still running,
+        this will block until at least one frame is acquired. If the camera has
+        stopped and no more frames are available, returns None.
+
+        The idea:
+        - Each call returns exactly *one* new frame index, in ascending order.
+        - For example, if frames 0,1,2,3 have arrived, the first call returns 0,
+            the next call returns 1, etc., until we've read them all.
+        """
+        # Check capture status.
+        captureStatus = ctypes.c_int32(0)
+        self.checkStatus(self.dcam.cap_status())
+
+        # If camera is still acquiring, wait for at least one new frame.
+        # This blocks until there's a frame (or the camera stops).
+        if captureStatus.value == DCAMCAP_STATUS_BUSY:
+            paramstart = DCAMWAIT_START(
+                0, 
+                0, 
+                DCAMWAIT_CAPEVENT_FRAMEREADY | DCAMWAIT_CAPEVENT_STOPPED,
+                100
+            )
+            paramstart.size = ctypes.sizeof(paramstart)
+            self.checkStatus(
+                self.dcam.dcamwait_start(
+                    self.wait_handle, ctypes.byref(paramstart)
+                ),
+                "dcamwait_start"
+            )
+
+        # Check how many frames have been acquired so far.
+        paramtransfer = self.dcam.cap_transferinfo()
+        self.checkStatus(paramtransfer, "dcamcap_transferinfo")
+        # cur_buffer_index = paramtransfer.nNewestFrameIndex
+        cur_frame_number = paramtransfer.nFrameCount
+
+        # How many *total* frames have arrived since last time?
+        backlog = cur_frame_number - self.last_frame_number
+        self.log.info('Size of backlog buffer: %s', backlog)
+
+        # Check for buffer overruns (we're acquiring more frames than we can store).
+        if backlog > self.number_image_buffers:
+            print(">> Warning! Hamamatsu camera frame buffer overrun detected!")
+        if backlog > self.max_backlog:
+            self.max_backlog = backlog
+
+        # If there are new frames, read exactly ONE new index.
+        if backlog > 0:
+            # Move forward by ONE index from the "last read" buffer_index.
+            next_index = (self.buffer_index + 1) % self.number_image_buffers
+
+            # Update the trackers:
+            self.buffer_index = next_index
+            self.last_frame_number += 1
+
+            # Return the single new index
+            return next_index
+        else:
+            # No new frames; if the camera is stopped, we won't get more. Return None.
+            return None
+
     def getFrames(self):
         """
         Gets all of the available frames.
@@ -496,55 +623,128 @@ class Camera(BaseCamera):
                be zero. Are frames getting dropped? Some sort of race condition?
         """
         frames = []
+        time_v = []
         new_frames = self.newFrames()
         for n in new_frames:
-            image = self.dcam.buf_getframedata(n)
+            start = time.perf_counter()
+            image = self.dcam.buf_getframedata(n) # this is the likely rate limiting step
+            end = time.perf_counter()
+            time_v.append(end-start)
             frames.append(image)
             if n == new_frames[-1]:
                 self._latest_frame  = image
-        return frames 
+        self.log.info('HCAM buf_Get frames average: %0.6f', np.mean(time_v))
+        return frames
+
+    # def newFrames(self):
+    #     """
+    #     Return a list of the ids of all the new frames since the last check.
+    #     Returns an empty list if the camera has already stopped and no frames
+    #     are available.
+
+    #     This will block waiting for at least one new frame.
+    #     """
+    #     # start = time.perf_counter()
+
+    #     captureStatus = self.dcam.cap_status()
+
+    #     # Wait for a new frame if the camera is acquiring.
+    #     if captureStatus == DCAMCAP_STATUS_BUSY:
+    #         ret = self.dcam.wait_capevent_frameready(3)
+    #         while not ret:
+    #             ret = self.dcam.wait_capevent_frameready(3)
+    #     # end = time.perf_counter()
+    #     # self.log.info('HCAM wait status busy: %0.6f', end-start)
+
+    #     # Check how many new frames there are.
+    #     # paramtransfer = DCAMCAP_TRANSFERINFO(
+    #     #     0, DCAMCAP_TRANSFERKIND_FRAME, 0, 0)
+    #     # paramtransfer.size = ctypes.sizeof(paramtransfer)
+    #     # self.checkStatus(self.dcam.dcamcap_transferinfo(self.cam_num,
+    #     #                                            ctypes.byref(paramtransfer)),
+    #     #                  "dcamcap_transferinfo")
+    #     # start = time.perf_counter()
+    #     paramtransfer = self.dcam.cap_transferinfo()
+    #     cur_buffer_index = paramtransfer.nNewestFrameIndex
+    #     cur_frame_number = paramtransfer.nFrameCount
+    #     # end = time.perf_counter()
+    #     # self.log.info('HCAM cap tranfer info: %0.6f', end-start)
+
+    #     # Check that we have not acquired more frames than we can store in our buffer.
+    #     # Keep track of the maximum backlog.
+    #     backlog = cur_frame_number - self.last_frame_number
+    #     if (backlog > self.buffer_size_frames):
+    #         print(">> Warning! hamamatsu camera frame buffer overrun detected!", backlog, self.buffer_size_frames)
+    #     if (backlog > self.max_backlog):
+    #         self.max_backlog = backlog
+    #     self.last_frame_number = cur_frame_number
+
+    #     # start = time.perf_counter()
+    #     # Create a list of the new frames.
+    #     new_frames = []
+    #     if (cur_buffer_index < self.buffer_index):
+    #         for i in range(self.buffer_index + 1, self.buffer_size_frames):
+    #             new_frames.append(i)
+    #         for i in range(cur_buffer_index + 1):
+    #             new_frames.append(i)
+    #     else:
+    #         for i in range(self.buffer_index, cur_buffer_index):
+    #             new_frames.append(i+1)
+    #     self.buffer_index = cur_buffer_index
+    #     if backlog>1:
+    #         print('Backlog at camera', backlog)
+    #     # end = time.perf_counter()
+    #     # self.log.info('HCAM ceate list of new frames: %0.6f', end-start)
+
+    #     return new_frames
+
 
     def newFrames(self):
         """
         Return a list of the ids of all the new frames since the last check.
         Returns an empty list if the camera has already stopped and no frames
         are available.
-
+    
         This will block waiting for at least one new frame.
         """
 
-        captureStatus = self.dcam.cap_status()
+        captureStatus = ctypes.c_int32(0)
+        self.checkStatus(self.dcam.cap_status())
 
         # Wait for a new frame if the camera is acquiring.
-        if captureStatus == DCAMCAP_STATUS_BUSY:
-            ret = self.dcam.wait_capevent_frameready(100)
-            while not ret:
-                ret = self.dcam.wait_capevent_frameready(100)
+        if captureStatus.value == DCAMCAP_STATUS_BUSY:
+            paramstart = DCAMWAIT_START(
+                    0, 
+                    0, 
+                    DCAMWAIT_CAPEVENT_FRAMEREADY | DCAMWAIT_CAPEVENT_STOPPED, 
+                    100)
+            paramstart.size = ctypes.sizeof(paramstart)
+            self.checkStatus(self.dcam.dcamwait_start(self.wait_handle,
+                                            ctypes.byref(paramstart)),
+                             "dcamwait_start")
 
         # Check how many new frames there are.
-        # paramtransfer = DCAMCAP_TRANSFERINFO(
-        #     0, DCAMCAP_TRANSFERKIND_FRAME, 0, 0)
-        # paramtransfer.size = ctypes.sizeof(paramtransfer)
-        # self.checkStatus(self.dcam.dcamcap_transferinfo(self.cam_num,
-        #                                            ctypes.byref(paramtransfer)),
-        #                  "dcamcap_transferinfo")
         paramtransfer = self.dcam.cap_transferinfo()
+        self.checkStatus(paramtransfer,
+                         "dcamcap_transferinfo")
         cur_buffer_index = paramtransfer.nNewestFrameIndex
         cur_frame_number = paramtransfer.nFrameCount
 
         # Check that we have not acquired more frames than we can store in our buffer.
         # Keep track of the maximum backlog.
         backlog = cur_frame_number - self.last_frame_number
-        if (backlog > self.buffer_size_frames):
-            print(">> Warning! hamamatsu camera frame buffer overrun detected!", backlog, self.buffer_size_frames)
+        self.log.info('Size of backlog buffer %0.6f', backlog)
+        if (backlog > self.number_image_buffers):
+            print(">> Warning! hamamatsu camera frame buffer overrun detected!")
         if (backlog > self.max_backlog):
             self.max_backlog = backlog
         self.last_frame_number = cur_frame_number
 
+
         # Create a list of the new frames.
         new_frames = []
         if (cur_buffer_index < self.buffer_index):
-            for i in range(self.buffer_index + 1, self.buffer_size_frames):
+            for i in range(self.buffer_index + 1, self.number_image_buffers):
                 new_frames.append(i)
             for i in range(cur_buffer_index + 1):
                 new_frames.append(i)
@@ -552,8 +752,9 @@ class Camera(BaseCamera):
             for i in range(self.buffer_index, cur_buffer_index):
                 new_frames.append(i+1)
         self.buffer_index = cur_buffer_index
-        if backlog>1:
-            print('Backlog at camera', backlog)
+
+        # if self.debug:
+        #     print(new_frames)
 
         return new_frames
 

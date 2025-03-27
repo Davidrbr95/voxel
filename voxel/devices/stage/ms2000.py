@@ -20,7 +20,7 @@ SCAN_PATTERN = {
 
 
 class MS2000ControllerSingleton(MS2000, metaclass=Singleton):
-    def __init__(self, com_port, baud_rate=9600):
+    def __init__(self, com_port, baud_rate=28800):
         super(MS2000ControllerSingleton, self).__init__(com_port, baud_rate)
 
 
@@ -136,7 +136,7 @@ class Stage(BaseStage):
             # slow_axis = next(
             #     key for key, value in axis_to_card.items() if value[0] == fast_card and value[1] != fast_position)
             # Stop any existing scan. Apply machine coordinate frame scan params.
-            
+            self.ms2000.set_TTL(y=3)
             print('fast axiss [fast axis position], [frame interal um], [frame_count]', fast_axis_start_position, frame_interval_um, frame_count)
             self.log.debug(f"fast axis start: {fast_axis_start_position},"
                            f"slow axis start: {slow_axis_start_position}")
@@ -148,7 +148,8 @@ class Stage(BaseStage):
                                 num_pixels=frame_count, retrace_speed_percent=None)
             self.ms2000.scanv(scan_start_mm=slow_axis_start_position,
                                 scan_stop_mm=slow_axis_stop_position,
-                                line_count=strip_count)
+                                line_count=strip_count,
+                                overshoot_factor=0.0)
     
     def setup_step_shoot_scan(self, *args, **kwargs):
         raise NotImplementedError("Step-shoot scan setup is not supported for MS2000.")
@@ -237,7 +238,74 @@ class Stage(BaseStage):
         self.log.info('MS2000 hardware axis parameters')
         self.log.info("{'instrument axis': 'hardware axis'} "
                       f"{self.instrument_to_hardware_axis_map}.")
+        
+    def setup_report_xz(self):
+        self.ms2000.setup_report_xz()
+    
+    def start_report_xz(self):
+        self.ms2000.start_report_xz()
 
+    def report_test(self):
+        self.ms2000.report_test()
+
+    def ring_buffer_setup_consumer(
+        self,
+        axis: str = "Y",
+        axis_value: int = 4,
+        consumer_mode: int = 0
+    ) -> None:
+        """
+        Setup a ring-buffer consumer on the specified axis (or axis index),
+        and specify the mode (0 => 'consumer' mode).
+        Example command:   RM Y=4 F=0
+        
+        :param axis:         Which axis label to assign the ring buffer to (e.g. 'Y').
+        :param axis_value:   Internal axis index in ASI’s ring buffer nomenclature.
+        :param consumer_mode: 0 for consumer mode.
+        """
+        self.ms2000.ring_buffer_setup_consumer(
+                                                axis,
+                                                axis_value, 
+                                                consumer_mode
+                                                )
+        
+    def set_ttl_input(self, axis: str = "X", value: int = 1) -> None:
+        """
+        Set the TTL input line for the given axis to a particular mode/value.
+        Example command:  TTL X=1
+
+        :param axis: e.g. 'X'
+        :param value: integer parameter for the TTL command.
+        """
+        self.ms2000.set_ttl_input(axis, value)
+
+    def ring_buffer_load_position(self, axis: str, position_mm: float) -> None:
+        """
+        Load the position of the given axis into the ring buffer.
+        The input is in millimeters; it will be converted internally
+        to ASI units (tenths of microns). For example:
+        
+            1.0 mm -> 1000 µm -> 10,000 in tenths-of-microns
+        
+        Example command:  LD Z=10000
+
+        :param axis:        e.g. 'Z'.
+        :param position_mm: stage position in millimeters.
+        """
+        self.ms2000.ring_buffer_load_position(axis, position_mm)
+
+    def ring_buffer_remaining(self, axis: str = "X") -> int:
+        """
+        Query how many positions remain in the ring buffer for the given axis.
+        Example command:  RM X?
+        Typical reply:     :A X=5
+        Parses out the integer (5 in this example).
+        
+        :param axis: Single axis label, e.g. 'X'.
+        :return:     Number of positions remaining in the ring buffer.
+        """
+        return self.ms2000.ring_buffer_remaining(axis)
+    
     @property
     def hardware_axis(self):
         return self._hardware_axis

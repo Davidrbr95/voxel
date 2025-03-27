@@ -61,6 +61,7 @@ class ImarisWriter(BaseWriter):
         self.ntiles=1
         self.nangles=1
         self.ntimes = 1
+        self.filepath = None
         self.nsetups = self.nilluminations * self.nchannels * self.ntiles * self.nangles
         self.attribute_counts = {'illumination': self.nilluminations, 'channel': self.nchannels,
                                  'angle': self.nangles, 'tile': self.ntiles}
@@ -262,9 +263,10 @@ class ImarisWriter(BaseWriter):
 
         # Add dimensions to dictionary with key (tile#, channel#)
         tile_dimensions = (
-            self._frame_count_px_px,
+            # self._frame_count_px_px,
             self._row_count_px,
             self._column_count_px,
+            self._frame_count_px_px,
         )
         self.dataset_dict[(self.current_tile_num, self.current_channel_num)] = (
             tile_dimensions
@@ -304,11 +306,11 @@ class ImarisWriter(BaseWriter):
         # shearing based on theta and y/z pixel sizes
         shear = np.tan(self._theta_deg * np.pi / 180.0) * size_y / size_z
         # shift tile in x, unit pixels
-        shift_x = scale_x * (self._x_position_mm * 1000 / size_x)
+        shift_x = scale_x * (self._x_position_mm * 1000 / size_z)
         # shift tile in y, unit pixels
-        shift_y = -1*scale_y * (self._y_position_mm * 1000 / size_y)
-        # shift tile in y, unit pixels
-        shift_z = -1*scale_z * (self._z_position_mm * 1000 / size_z)
+        shift_y = 1*scale_y * (self._y_position_mm * 1000 / size_x)
+        # shift tile in z, unit pixels
+        shift_z = -1*scale_z * (self._z_position_mm * 1000 / size_y)
 
         affine_deskew = np.array(
             ([1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, shear, 1.0, 0.0])
@@ -439,7 +441,8 @@ class ImarisWriter(BaseWriter):
             setup_id = None
         return setup_id
 
-    def write_xml(self, filename, camera_name="default",  microscope_name="default",
+    ### THIS WAS COMMENTED OUT
+    def write_xml(self, camera_name="default",  microscope_name="default",
                        microscope_version="0.0", user_name="user"):
         """
         Write XML header file for the HDF5 file.
@@ -452,9 +455,12 @@ class ImarisWriter(BaseWriter):
             microscope_version: str, optional
             user_name: str, optional
         """
-        self.filename_xml = filename
-        self.filename_xml = self.filename_xml.with_suffix('.xml')
-        filename = filename.with_suffix('.zarr')
+        # filepath = Path(self._path, self._acquisition_name, self._filename).absolute()
+        self.filename_xml = str(Path(self._path, self._acquisition_name, self._filename).absolute())
+        print('xml name', self.filename_xml)
+        self.filename_xml = self.filename_xml[:-4]+'.xml'
+        print('xml name 2', self.filename_xml)
+        filename = self.filename[:-4]+'.zarr'
         try:
             # check if tile position already exists
             self.current_tile_num = self.tile_list.index(
@@ -603,7 +609,7 @@ class ImarisWriter(BaseWriter):
 
         self._xml_indent(root)
         tree = ET.ElementTree(root)
-        print(self.filename_xml)
+        print('End of xml writing function', self.filename_xml)
         tree.write(self.filename_xml, xml_declaration=True, encoding='utf-8', method="xml")
     
     def _xml_indent(self, elem, level=0):
@@ -622,6 +628,7 @@ class ImarisWriter(BaseWriter):
             if level and (not elem.tail or not elem.tail.strip()):
                 elem.tail = i
 
+    ### THIS WAS COMMENTED OUT
     def _run(
         self,
         chunk_dim_order: tuple,
@@ -687,8 +694,7 @@ class ImarisWriter(BaseWriter):
         log_handler.setFormatter(log_formatter)
         logger.addHandler(log_handler)
         filepath = Path(self._path, self._acquisition_name, self._filename).absolute()
-        
-        self.write_xml(filepath)
+        # self.write_xml(filepath)
         application_name = "PyImarisWriter"
         application_version = "1.0.0"
 

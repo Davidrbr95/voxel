@@ -28,6 +28,8 @@ DATA_TYPES = {"unit8": aqz.DataType.UINT16, "uint16": aqz.DataType.UINT16}
 
 VERSIONS = {"v2": aqz.ZarrVersion.V2, "v3": aqz.ZarrVersion.V3}
 
+SHUFFLES = {True: 1, False: 0}
+
 
 class ZarrWriter(BaseWriter):
     """
@@ -52,6 +54,8 @@ class ZarrWriter(BaseWriter):
         self._chunk_size_z_px = None
         self._version = None
         self._multiscale = None
+        self._shuffle = 0
+        self._clevel = 1
 
     @property
     def chunk_size_x_px(self) -> int:
@@ -161,6 +165,48 @@ class ZarrWriter(BaseWriter):
             raise ValueError("multiscale setting must be true or false")
         self.log.info(f"setting multiscale setting to: {multiscale}")
         self._multiscale = multiscale
+
+    @property
+    def clevel(self) -> str:
+        """Get the compression level of the zarr writer.
+
+        :return: Compression level
+        :rtype: int
+        """
+        return self._clevel
+
+    @clevel.setter
+    def clevel(self, clevel: int) -> None:
+        """Set the compression level.
+
+        :param clevel: Compression level
+        :type shuffle: int
+        """
+        self._clevel = clevel
+
+    @property
+    def shuffle(self) -> str:
+        """Get the shuffle mode of the zarr writer.
+
+        :return: Shuffle mode
+        :rtype: str
+        """
+        return self._shuffle
+
+    @shuffle.setter
+    def shuffle(self, shuffle: str) -> None:
+        """Set the compression shuffle mode.
+
+        :param shuffle: Shuffle mode
+        * **on**
+        * **off**
+        :type shuffle: str
+        """
+        valid = list(SHUFFLES.keys())
+        if shuffle not in valid:
+            raise ValueError("shuffle must be one of %r." % valid)
+        self.log.info(f"setting zarr shuffle to: {shuffle}")
+        self._shuffle = SHUFFLES[shuffle]
 
     @property
     def version(self) -> str:
@@ -293,16 +339,20 @@ class ZarrWriter(BaseWriter):
         logger.addHandler(log_handler)
         filepath = Path(self._path, self._acquisition_name, self._filename).absolute()
 
-        x_shards = ceil(self.column_count_px // self._chunk_size_x_px)
-        y_shards = ceil(self.row_count_px // self._chunk_size_y_px)
-        x_array_size = x_shards * self._chunk_size_x_px
-        y_array_size = y_shards * self._chunk_size_y_px
+        print(self._compression, aqz.Compressor.BLOSC1, self._clevel, self._shuffle)
+        compression_settings = aqz.CompressionSettings(
+            codec=self._compression,  # compression codec
+            compressor=aqz.Compressor.BLOSC1,  # compressor
+            clevel=self._clevel,  # compression level
+            shuffle=self._shuffle,  # shuffle filter
+        )
 
         settings = aqz.StreamSettings(
             store_path=str(filepath),
             data_type=DATA_TYPES[self._data_type],
             version=VERSIONS[self._version],
             multiscale=self._multiscale,
+            # compression=compression_settings,
         )
 
         settings.dimensions.extend(
@@ -311,22 +361,22 @@ class ZarrWriter(BaseWriter):
                     name="z",
                     type=aqz.DimensionType.SPACE,
                     array_size_px=self.frame_count_px,
-                    chunk_size_px=self.chunk_count_px,
+                    chunk_size_px=self._chunk_size_z_px,
                     shard_size_chunks=1,  # hardcode shard to 1 in z
                 ),
                 aqz.Dimension(
                     name="y",
                     type=aqz.DimensionType.SPACE,
-                    array_size_px=y_array_size,
+                    array_size_px=self.row_count_px,
                     chunk_size_px=self._chunk_size_y_px,
-                    shard_size_chunks=y_shards,
+                    shard_size_chunks=ceil(self.row_count_px / self._chunk_size_y_px),
                 ),
                 aqz.Dimension(
                     name="x",
                     type=aqz.DimensionType.SPACE,
-                    array_size_px=x_array_size,
+                    array_size_px=self.column_count_px,
                     chunk_size_px=self._chunk_size_x_px,
-                    shard_size_chunks=x_shards,
+                    shard_size_chunks=ceil(self.column_count_px / self._chunk_size_x_px),
                 ),
             ]
         )

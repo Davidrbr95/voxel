@@ -34,7 +34,7 @@ class KDC101Controller(BaseTunableLens):
         self.lib_path = lib_path
         self.lib = None
         self.conversion_factor = 0.0289 / 1000  # mm per device unit
-
+        self._position_mm_dictionary = {}
         # Load the Kinesis library
         self._load_library()
         self.connect()
@@ -88,6 +88,26 @@ class KDC101Controller(BaseTunableLens):
         print("Homing completed.")
 
     @property
+    def position_mm_dictionary(self) -> float:
+        """
+        Retrieves the current position of the device in real units.
+
+        :return: Current position in real units (e.g., mm).
+        """
+        
+        return self._position_mm_dictionary 
+
+    @position_mm_dictionary.setter
+    def position_mm_dictionary(self, position):
+        """
+        Moves the device to the specified real position.
+
+        :param position: Target position in real units (e.g., mm).
+        """
+        self._position_mm_dictionary = position
+
+
+    @property
     def position_mm(self) -> float:
         """
         Retrieves the current position of the device in real units.
@@ -120,8 +140,19 @@ class KDC101Controller(BaseTunableLens):
         self.lib.CC_SetMoveAbsolutePosition(self.serial_num, new_pos_dev)
         time.sleep(0.25)  # Brief pause before moving
         self.lib.CC_MoveAbsolute(self.serial_num)
+        time.sleep(1)
+        # while self.is_moving():
+        #     print('hh')
+        #     time.sleep(0.25)
+
         self.log.info(f"Move command issued.")
 
+    # def is_moving(self):
+    #     """Returns True if the motor is currently moving (in any direction or homing)"""
+    #     status = self.lib.CC_GetStatusBits(self.serial_num)
+    #     MOVING_MASK = 0x00000010 | 0x00000020 | 0x00000040 | 0x00000080
+    #     return (status & MOVING_MASK) != 0
+    
     def close(self):
         """
         Disconnects from the KDC101 device and stops polling.

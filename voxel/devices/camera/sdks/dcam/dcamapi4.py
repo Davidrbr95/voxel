@@ -1194,6 +1194,21 @@ class DCAMBUF_FRAME(Structure):
         self.camerastamp = 0
 
 
+# class DCAMBUF_ATTACH(Structure):
+#     _pack_ = 8
+#     _fields_ = [
+#         ('size', c_int32),
+#         ('iKind', c_int32),
+#         ('buffer', c_void_p),
+#         ('buffercount', c_int32)
+#     ]
+
+#     def __init__(self):
+#         self.size = sizeof(DCAMBUF_ATTACH)
+#         self.iKind = 0
+#         self.buffer = None
+#         self.buffercount = 0
+
 class DCAMWAIT_OPEN(Structure):
     _pack_ = 8
     _fields_ = [
