@@ -20,7 +20,7 @@ SCAN_PATTERN = {
 
 
 class MS2000ControllerSingleton(MS2000, metaclass=Singleton):
-    def __init__(self, com_port, baud_rate=28800):
+    def __init__(self, com_port, baud_rate=115200):
         super(MS2000ControllerSingleton, self).__init__(com_port, baud_rate)
 
 
@@ -36,7 +36,7 @@ class Stage(BaseStage):
         """
         self.log = logging.getLogger(__name__ + "." + self.__class__.__name__)
         self.log.setLevel(log_level)
-
+        self.scanflag = False
         if ms2000 is None and port is None:
             raise ValueError('MS2000 instance and port cannot both be none')
 
@@ -104,6 +104,16 @@ class Stage(BaseStage):
         self.ms2000.moverel_axis(self.hardware_axis, round(position * 10000))  # Convert mm to 1/10 micron
         if wait:
             self.ms2000.wait_for_device()
+    
+    def move_absolute_threeaxis_mm(self, tile_position):
+        # Iterate through each axis in the tile_position
+        for axis, position in tile_position.items():
+            # Call the move_absolute_mm function for each axis
+            self.ms2000.move_axis(axis, round(position * 10000))  # Convert mm to 1/10 micron
+            self.log.info(f"Moving {axis} axis to {position} mm")
+            
+        # Optionally wait after all moves are completed
+        self.ms2000.wait_for_device()
 
     def move_absolute_mm(self, position: float, wait: bool = True):
         w_text = "" if wait else "NOT "
@@ -163,7 +173,13 @@ class Stage(BaseStage):
 
     @property
     def position_mm(self):
+
+        if self.scanflag:
+            # print('SCAN FLAG TRUE')
+            ms2000_position_um = 0
+            return self._hardware_to_instrument({self.hardware_axis: ms2000_position_um/1000}).get(self.instrument_axis, None)
         ms2000_position_um = self.ms2000.get_position_um(self.hardware_axis)
+        # print('PROPERTY WORKER ms2000', ms2000_position_um)
         return self._hardware_to_instrument({self.hardware_axis: ms2000_position_um/1000}).get(self.instrument_axis, None)
 
     @position_mm.setter
@@ -233,6 +249,10 @@ class Stage(BaseStage):
     def zero_in_place(self):
         self.ms2000.send_command(f"ZERO {self.hardware_axis}")
         self.ms2000.read_response()
+    
+    def zero_all_axis(self):
+        self.ms2000.send_command(f"Z")
+        self.ms2000.read_response()
 
     def log_metadata(self):
         self.log.info('MS2000 hardware axis parameters')
@@ -244,6 +264,22 @@ class Stage(BaseStage):
     
     def start_report_xz(self):
         self.ms2000.start_report_xz()
+        # self.ms2000.read_response()
+
+    def stop_report_xz(self):
+        self.ms2000.stop_report_xz()
+
+    def set_z_kp(self):
+        self.ms2000.set_z_kp()
+
+    def set_z_ki(self):
+        self.ms2000.set_z_ki()
+
+    def set_z_kd(self):
+        self.ms2000.set_z_kd()
+    
+    def read_report_response(self):
+        self.ms2000.read_report_response()
 
     def report_test(self):
         self.ms2000.report_test()

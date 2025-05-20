@@ -4,6 +4,7 @@ from serial import EIGHTBITS
 from serial import PARITY_NONE
 from serial import STOPBITS_ONE
 from serial.tools import list_ports
+import time
  
 class SerialPort:
     """
@@ -87,6 +88,7 @@ class SerialPort:
  
     def read_response(self) -> str:
         """Read a line from the serial response."""
+        time.sleep(0.01)
         response = self.serial_port.readline()
         # response = self.serial_port.readall()
         response = response.decode(encoding="ascii")

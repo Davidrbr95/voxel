@@ -113,7 +113,7 @@ class MS2000(SerialPort):
                 dict_reply[words[0]] = val
         return dict_reply
     
-    def __init__(self, com_port: str, baud_rate: int=28800, report: str=True):
+    def __init__(self, com_port: str, baud_rate: int=115200, report: str=True):
         super().__init__(com_port, baud_rate, report)
         # validate baud_rate input
         if baud_rate in self.BAUD_RATES:
@@ -408,8 +408,8 @@ class MS2000(SerialPort):
         self.send_command(f"RT X=10")
         self.read_response()
         time.sleep(0.001)
-        self.send_command(f"RM Y=5")
-        self.read_response()
+        # self.send_command(f"RM Y=5")
+        # self.read_response()
         time.sleep(0.001)
         start_time = time.time()
         self.send_command(f"RT M+")
@@ -425,19 +425,29 @@ class MS2000(SerialPort):
         # self.send_command(f"RT M-")
         # self.read_response()
         # print("Should be stopped by now...")
+    
+    def read_report_response(self) -> None:
+        self.read_response()
 
 
     def setup_report_xz(self) -> None:
         self.send_command(f"RT X=10")
         self.read_response()
-        time.sleep(0.001)
-        self.send_command(f"RM Y=5")
-        self.read_response()
-        time.sleep(0.001)
+        time.sleep(0.01)
+        # self.send_command(f"RM Y=5")
+        # self.read_response()
+        # time.sleep(0.01)
     
 
     def start_report_xz(self) -> None:
         self.send_command(f"RT M+")
+        self.read_response()
+        # time.sleep(0.001)
+
+    def stop_report_xz(self) -> None:
+        self.send_command(f"RT M-")
+        self.read_response()
+        # time.sleep(0.001)
 
 
     def set_TTL(self, y=3) -> None:
@@ -680,3 +690,18 @@ class MS2000(SerialPort):
         reply = self.read_response()
         self.check_reply_for_errors(reply)
 
+
+    def set_z_kp(self) -> None:
+        cmd = f"KP Z=250"
+        self.send_command(cmd)
+        reply = self.read_response()
+
+    def set_z_ki(self) -> None:
+        cmd = f"KI Z=20"
+        self.send_command(cmd)
+        reply = self.read_response()
+    
+    def set_z_kd(self) -> None:
+        cmd = f"KD Z=10"
+        self.send_command(cmd)
+        reply = self.read_response()

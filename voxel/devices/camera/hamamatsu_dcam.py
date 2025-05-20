@@ -49,8 +49,8 @@ DCAMCAP_START_SNAP = 0
 
 DCAMBUF_ATTACHKIND_FRAME = 0
 
-# BUFFER_SIZE_MB = 2000
-BUFFER_SIZE_MB = 50000
+BUFFER_SIZE_MB = 2000
+# BUFFER_SIZE_MB = 50000
 
 # 2048 px * 128 px * 16 bits / 2 * 10 cm / (2.2727 um/px) ~ 23 GB
 # 2048 px * 32 px * 16 bits / 2 * 10 cm / (2.2727 um/px) ~ 5.7 GB
@@ -200,7 +200,7 @@ class Camera(BaseCamera):
         else:
             self.log.error('DcamapiSingleton.init() fails with error {}'.format(DCAMERR(DcamapiSingleton.lasterr()).name))
         # initialize parameter values
-        self._update_parameters()
+        # self._update_parameters()
 
 
     @DeliminatedProperty(minimum=float('-inf'), maximum=float('inf'))
@@ -286,6 +286,7 @@ class Camera(BaseCamera):
     def pixel_type(self):
         pixel_type = self.dcam.prop_getvalue(PROPERTIES["pixel_type"])
         # invert the dictionary and find the abstracted key to output
+        print(f"Looking up pixel_type, current raw value: {pixel_type}")
         return next(key for key, value in PIXEL_TYPES.items() if value == pixel_type)
 
     @pixel_type.setter
@@ -357,7 +358,7 @@ class Camera(BaseCamera):
 
         # TODO figure out TRIGGERACTIVE bool
         self.dcam.prop_setvalue(PROPERTIES["trigger_mode"], TRIGGERS['mode'][mode])
-        print("This is mode...........", mode)
+        print("In dcam, current trigger mode...........", mode)
         self.dcam.prop_setvalue(PROPERTIES["trigger_source"], TRIGGERS['source'][source])
         self.dcam.prop_setvalue(PROPERTIES["trigger_polarity"], TRIGGERS['polarity'][polarity])
         self.dcam.prop_setvalue(PROPERTIES["trigger_active"], TRIGGERS['active'][active])
@@ -433,6 +434,7 @@ class Camera(BaseCamera):
         self._update_parameters()
 
     def prepare(self):
+        print("In dcam, start preparing camera...")
         # determine bits to bytes
         if self.pixel_type == 'mono8':
             bit_to_byte = 1
@@ -507,7 +509,7 @@ class Camera(BaseCamera):
             self.last_frame_number = 0 
             self.max_backlog = 0
             self.buffer_index = 0
-            if self.decam is not None:
+            if self.dcam is not None:
                 self.dcam.dev_close()
             DcamapiSingleton.uninit()
 
@@ -545,8 +547,43 @@ class Camera(BaseCamera):
         
         self._latest_frame = frame_data
         # self.log.info("HCAM buf_getframedata() took: %.6f seconds", (t1 - t0))
-        return frame_data
+        return frame_data, 1
+    
+    def getFrame_alloc(self):
+        idx = self.nextFrameIndex()
+        if idx is None:
+            # No more frames or camera is done.
+            return None
+        
 
+        paramlock = DCAMBUF_FRAME()
+        
+        paramlock.size = 0
+        paramlock.iKind = 0
+        paramlock.option = 0
+        paramlock.iFrame = idx
+        paramlock.buf = None
+        paramlock.rowbytes = 0
+        paramlock.type = 0
+        paramlock.width = 0
+        paramlock.height = 0
+        paramlock.left = 0
+        paramlock.top = 0
+        paramlock.timestamp = DCAM_TIMESTAMP()
+        paramlock.framestamp = 0
+        paramlock.camerastamp = 0
+        paramlock.size = ctypes.sizeof(paramlock)	
+
+        # Lock the frame in the camera buffer & get address.
+        self.checkStatus(self.dcam.dcambuf_lockframe(self.dcam.hdcam,
+                                            ctypes.byref(paramlock)),
+                            "dcambuf_lockframe")
+
+        # Create storage for the frame & copy into this storage.
+        hc_data = HCamData(self.dcam.prop_getvalue(4325952))
+        hc_data.copyData(paramlock.buf)
+
+        return hc_data, 1
 
     def nextFrameIndex(self):
         """
@@ -590,6 +627,8 @@ class Camera(BaseCamera):
         # How many *total* frames have arrived since last time?
         backlog = cur_frame_number - self.last_frame_number
         self.log.info('Size of backlog buffer: %s', backlog)
+        # if backlog>2:
+        #     print('Size of backlog buffer: %s', backlog)
 
         # Check for buffer overruns (we're acquiring more frames than we can store).
         if backlog > self.number_image_buffers:
@@ -978,3 +1017,40 @@ class Camera(BaseCamera):
            reply = self.dcam.prop_getvaluetext(PROPERTIES['pixel_type'], prop_value)
            if reply != False:
                PIXEL_TYPES[reply.lower()] = prop_value
+
+
+class HCamData(object):
+    """
+    Hamamatsu camera data object.
+
+    Initially I tried to use create_string_buffer() to allocate storage for the 
+    data from the camera but this turned out to be too slow. The software
+    kept falling behind the camera and create_string_buffer() seemed to be the
+    bottleneck.
+
+    Using numpy makes a lot more sense anyways..
+    """
+    def __init__(self, size = None, **kwds):
+        """
+        Create a data object of the appropriate size.
+        """
+        super().__init__(**kwds)
+        size = int(size)
+        self.np_array = np.ascontiguousarray(np.empty(int(size/2), dtype=np.uint16))
+        self.size = size
+
+    def __getitem__(self, slice):
+        return self.np_array[slice]
+
+    def copyData(self, address):
+        """
+        Uses the C memmove function to copy data from an address in memory
+        into memory allocated for the numpy array of this object.
+        """
+        ctypes.memmove(self.np_array.ctypes.data, address, self.size)
+
+    def getData(self):
+        return self.np_array
+
+    def getDataPtr(self):
+        return self.np_array.ctypes.data

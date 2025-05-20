@@ -145,6 +145,11 @@ class Dcam:
         self.__hdcam = 0
         self.__hdcamwait = 0
         self.__bufframe = DCAMBUF_FRAME()
+        self.dcambuf_lockframe = dcambuf_lockframe
+    
+    @property
+    def hdcam(self):
+        return self.__hdcam
 
     def __repr__(self):
         return 'Dcam()'

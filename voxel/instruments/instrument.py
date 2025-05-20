@@ -94,6 +94,8 @@ class Instrument:
             # copy so config is not altered by adding in parent devices
             self._construct_subdevice(device_object, subdevice_name, copy.deepcopy(subdevice_specs), lock)
 
+        return device_object
+
     def _construct_subdevice(self, device_object, subdevice_name, subdevice_specs, lock):
         """Handle the case where devices share serial ports or device objects
         :param device_object: parent device setup before sub-device
@@ -164,6 +166,14 @@ class Instrument:
     def close(self):
         """Close functionality"""
         pass
+
+    def relink_camera_device(self, camera_name: str, new_camera_object: object):
+        for device_name, device_specs in self.config['instrument']['devices'].items():
+            if device_name == camera_name:
+                device_type = inflection.pluralize(device_specs['type'])  # e.g., 'camera' → 'cameras'
+                getattr(self, device_type)[camera_name] = new_camera_object
+                return
+        raise KeyError(f"Camera {camera_name} not found in instrument config.")
 
 
 def for_all_methods(lock, cls):
