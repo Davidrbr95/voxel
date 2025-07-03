@@ -469,6 +469,9 @@ class Camera(BaseCamera):
         self.pre_frame_count_px = 0
         self.buffer_index = -1
         self.dcam.cap_start()
+    
+    def ready_signal(self):
+        self.camera_ready_event.set()
 
     def setSubArrayMode(self):
         """

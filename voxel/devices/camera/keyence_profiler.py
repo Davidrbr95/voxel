@@ -8,6 +8,7 @@ import voxel.devices.camera.sdks.keyence.LJXAwrap as LJXAwrap
 from voxel.devices.camera.base import BaseCamera
 from voxel.descriptors.deliminated_property import DeliminatedProperty
 import threading
+import multiprocessing as mp
 
 
 SAMPLING_RATE = {
@@ -266,6 +267,9 @@ class Profiler(BaseCamera):
         if self.run_first:
             self.highspeed_com_setup(self.total_lines)
 
+        time.sleep(0.5) ## Extremely important sleep here!!!
+        self.camera_ready_event.set()
+
         print('STARTING THREAD')
         self.log.info("start_thread")
         # my_callback = LJXAwrap.LJX8IF_CALLBACK_SIMPLE_ARRAY(self.callback)
@@ -310,6 +314,7 @@ class Profiler(BaseCamera):
         self.height_px = int(total_lines)
         self.keyence_producer_thread = threading.Thread(target=self.start_thread, name="ProducerThread")
         self.keyence_producer_thread.start()
+        # self.camera_ready_event.set()
 
 
     @no_lock

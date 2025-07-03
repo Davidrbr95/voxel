@@ -408,8 +408,8 @@ class MS2000(SerialPort):
         self.send_command(f"RT X=10")
         self.read_response()
         time.sleep(0.001)
-        # self.send_command(f"RM Y=5")
-        # self.read_response()
+        self.send_command(f"RM Y=5")
+        self.read_response()
         time.sleep(0.001)
         start_time = time.time()
         self.send_command(f"RT M+")
@@ -425,29 +425,19 @@ class MS2000(SerialPort):
         # self.send_command(f"RT M-")
         # self.read_response()
         # print("Should be stopped by now...")
-    
-    def read_report_response(self) -> None:
-        self.read_response()
 
 
     def setup_report_xz(self) -> None:
         self.send_command(f"RT X=10")
         self.read_response()
-        time.sleep(0.01)
-        # self.send_command(f"RM Y=5")
-        # self.read_response()
-        # time.sleep(0.01)
+        time.sleep(0.001)
+        self.send_command(f"RM Y=5")
+        self.read_response()
+        time.sleep(0.001)
     
 
     def start_report_xz(self) -> None:
         self.send_command(f"RT M+")
-        self.read_response()
-        # time.sleep(0.001)
-
-    def stop_report_xz(self) -> None:
-        self.send_command(f"RT M-")
-        self.read_response()
-        # time.sleep(0.001)
 
 
     def set_TTL(self, y=3) -> None:
@@ -476,13 +466,10 @@ class MS2000(SerialPort):
         self.read_response()
  
     def set_max_speed(self, axis: str, speed:int) -> None:
-        # traceback.print_stack()
         """Set the speed on a specific axis. Speed is in mm/s."""
-        print('RUNNING COMMAND')
         print(f"SPEED {axis}={speed}\r")
         self.send_command(f"SPEED {axis}={speed}\r")
         response = self.read_response()
-        print('RESPONSE FROM SET MAX SPEED:', response)
     
     def get_max_speed(self, axis: str):
         """Get the speed on a specific axis. Speed is in mm/s."""
@@ -657,29 +644,7 @@ class MS2000(SerialPort):
         reply = self.read_response()
         self.check_reply_for_errors(reply)
 
-    # def ring_buffer_load_position(self, axis: str, position_mm: float) -> None:
-    #     """
-    #     Load the position of the given axis into the ring buffer.
-    #     The input is in millimeters; it will be converted internally
-    #     to ASI units (tenths of microns). For example:
-        
-    #         1.0 mm -> 1000 µm -> 10,000 in tenths-of-microns
-        
-    #     Example command:  LD Z=10000
-
-    #     :param axis:        e.g. 'Z'.
-    #     :param position_mm: stage position in millimeters.
-    #     """
-    #     # Convert mm --> 0.1 µm (ASI units)
-    #     # 1 mm = 1000 µm => 10000 (tenths of a micron)
-    #     position_asi = int(round(position_mm * 10000)) 
-
-    #     cmd = f"LD {axis.upper()}={position_asi}\r"
-    #     self.send_command(cmd)
-    #     reply = self.read_response()
-    #     self.check_reply_for_errors(reply)
-
-    def ring_buffer_load_position(self, axis1: str, axis2: str, position_mm: float) -> None:
+    def ring_buffer_load_position(self, axis: str, position_mm: float) -> None:
         """
         Load the position of the given axis into the ring buffer.
         The input is in millimeters; it will be converted internally
@@ -696,7 +661,7 @@ class MS2000(SerialPort):
         # 1 mm = 1000 µm => 10000 (tenths of a micron)
         position_asi = int(round(position_mm * 10000)) 
 
-        cmd = f"LD {axis1.upper()}={position_asi} {axis2.upper()}={position_asi}\r "
+        cmd = f"LD {axis.upper()}={position_asi}\r"
         self.send_command(cmd)
         reply = self.read_response()
         self.check_reply_for_errors(reply)
@@ -715,68 +680,3 @@ class MS2000(SerialPort):
         reply = self.read_response()
         self.check_reply_for_errors(reply)
 
-
-    def set_z_kp(self) -> None:
-        cmd = f"KP Z=250"
-        self.send_command(cmd)
-        reply = self.read_response()
-
-    def set_z_ki(self) -> None:
-        cmd = f"KI Z=20"
-        self.send_command(cmd)
-        reply = self.read_response()
-    
-    def set_z_kd(self) -> None:
-        cmd = f"KD Z=10"
-        self.send_command(cmd)
-        reply = self.read_response()
-
-    def set_smooth_z_motion_asi_parameters(self) -> None:
-        cmd = f"KP Z=5 F=5"
-        self.send_command(cmd)
-        reply = self.read_response()
-
-        cmd = f"KI Z=0 F=0"
-        self.send_command(cmd)
-        reply = self.read_response()
-
-        cmd = f"KD Z=200 F=200"
-        self.send_command(cmd)
-        reply = self.read_response()
-
-        cmd = f"PC Z=1.0 F=1.0"
-        self.send_command(cmd)
-        reply = self.read_response()
-
-        cmd = f"E Z=5.0 F=5.0"
-        self.send_command(cmd)
-        reply = self.read_response()
-
-        cmd = f"B Z=0 F=0"
-        self.send_command(cmd)
-        reply = self.read_response()
-    
-    def set_default_z_motion_asi_parameters(self) -> None:
-        cmd = f"KP Z=125 F=125"
-        self.send_command(cmd)
-        reply = self.read_response()
-
-        cmd = f"KI Z=12 F=12"
-        self.send_command(cmd)
-        reply = self.read_response()
-
-        cmd = f"KD Z=0 F=0"
-        self.send_command(cmd)
-        reply = self.read_response()
-
-        cmd = f"PC Z=0.000006 F=0.000006"
-        self.send_command(cmd)
-        reply = self.read_response()
-
-        cmd = f"E Z=0.000200 F=0.000200"
-        self.send_command(cmd)
-        reply = self.read_response()
-
-        cmd = f"B Z=0 F=0"
-        self.send_command(cmd)
-        reply = self.read_response()
