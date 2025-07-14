@@ -120,7 +120,7 @@ class MS2000(SerialPort):
             self.baud_rate = baud_rate
         else:
             raise ValueError("The baud rate is not valid. Valid rates: 9600, 19200, 28800, or 115200.")
-        self.connect_to_serial()
+        self.connect_to_serial(read_timeout=0.001)
         self.skipped_replies = 0
         self.log = logging.getLogger(__name__)
         self.build_config = self.get_build_config()
@@ -472,8 +472,9 @@ class MS2000(SerialPort):
  
     def move_axis(self, axis: str, distance: int) -> None:
         """Move the stage with an absolute move."""
-        self.send_command(f"MOVE {axis}={distance}\r")
-        self.read_response()
+        self.send_command_v2(f"MOVE {axis}={distance}")
+        self.read_response_V2()
+        # time.sleep(0.004)
  
     def set_max_speed(self, axis: str, speed:int) -> None:
         # traceback.print_stack()
@@ -492,21 +493,29 @@ class MS2000(SerialPort):
         
     def get_position(self, axis: str) -> int:
         """Return the position of the stage in ASI units (tenths of microns)."""
-        self.send_command(f"WHERE {axis}\r")
+        self.send_command(f"WHERE {axis}")
         response = self.read_response()
         return int(response.split(" ")[1])
  
     def get_position_um(self, axis: str) -> float:
         """Return the position of the stage in microns."""
         # self.send_command(f"WHERE {axis} X Z\r")
-        self.send_command(f"WHERE X Y Z\r")
+        # t0 = time.perf_counter()
+        self.send_command(f"WHERE X Y Z")
+        # t_response_s = time.perf_counter()-t0
+        # print("send command time:", t_response_s)
+        
         # self.send_command(f"WHERE {axis} Z\r")
         # self.send_command(f"WHERE {axis}\r")
+        # t0 = time.perf_counter()
         response = self.read_response()
+        # t_response_r = time.perf_counter()-t0
+        # print("Overall response time:", t_response_r)
+        # print("total time:", t_response_r+t_response_s)
         # print('R', axis, 'Z', response)
-        # print(traceback.print_stack(s))
+        # print(traceback.print_stack())
         pos = {'X':1, 'Y':2, 'Z': 3}
-        self.log.info("Response to position ask: %s", response)
+        # self.log.info("Response to position ask: %s", response)
         # print(response, axis)
         return float(response.split(" ")[pos[axis]])/10.0
 
@@ -516,21 +525,19 @@ class MS2000(SerialPort):
     
     def get_xz_position_mm(self) -> float:
         """Return the position of the stage in mm for x and z"""
-        self.send_command(f"WHERE X Z\r")
-        response = self.read_response()
-        print(response)
+        # t0 = time.perf_counter()
+        self.send_command_v2(f"WHERE X Z")
+        # t_response = time.perf_counter()-t0
+        # print("Send command time:", t_response)
+        response = self.read_response_V2()
+        # print(response)
         return float(response.split(" ")[1])/10000.0, float(response.split(" ")[2])/10000.0
     
-        # response = None
-        # while response is None:
-        #     print('WAITING FOR X Z')
-        #     self.send_command(f"WHERE X Z\r")
-        #     response = self.read_response()
-        #     if response == '\r\n' or response == '\r:' or len(response.split(" "))<3:
-        #         time.sleep(0.001)
-        #         response = None
-        #     print('X Z Res', response)
-        # return float(response.split(" ")[1])/10000.0, float(response.split(" ")[2])/10000.0
+    def get_xzf_position_mm(self) -> float:
+        """Return the position of the stage in mm for x and z"""
+        self.send_command_v2(f"WHERE X Z F")
+        response = self.read_response_V2()
+        return float(response.split(" ")[1])/10000.0, float(response.split(" ")[2])/10000.0, float(response.split(" ")[2])/10000.0
     
     def get_backlash(self, axis: str):
         """Return the backslash of the stage in mm."""
@@ -573,7 +580,7 @@ class MS2000(SerialPort):
  
     def is_axis_busy(self, axis: str) -> bool:
         """Returns True if the axis is busy."""
-        self.send_command(f"RS {axis}?\r")
+        self.send_command(f"RS {axis}?")
         return "B" in self.read_response()
  
     def is_device_busy(self) -> bool:
@@ -757,25 +764,25 @@ class MS2000(SerialPort):
         reply = self.read_response()
     
     def set_default_z_motion_asi_parameters(self) -> None:
-        cmd = f"KP Z=125 F=125"
-        self.send_command(cmd)
-        reply = self.read_response()
+        # cmd = f"KP Z=125 F=125"
+        # self.send_command(cmd)
+        # reply = self.read_response()
 
-        cmd = f"KI Z=12 F=12"
-        self.send_command(cmd)
-        reply = self.read_response()
+        # cmd = f"KI Z=12 F=12"
+        # self.send_command(cmd)
+        # reply = self.read_response()
 
-        cmd = f"KD Z=0 F=0"
-        self.send_command(cmd)
-        reply = self.read_response()
+        # cmd = f"KD Z=0 F=0"
+        # self.send_command(cmd)
+        # reply = self.read_response()
 
-        cmd = f"PC Z=0.000006 F=0.000006"
-        self.send_command(cmd)
-        reply = self.read_response()
+        # cmd = f"PC Z=0.000006 F=0.000006"
+        # self.send_command(cmd)
+        # reply = self.read_response()
 
-        cmd = f"E Z=0.000200 F=0.000200"
-        self.send_command(cmd)
-        reply = self.read_response()
+        # cmd = f"E Z=0.000200 F=0.000200"
+        # self.send_command(cmd)
+        # reply = self.read_response()
 
         cmd = f"B Z=0 F=0"
         self.send_command(cmd)

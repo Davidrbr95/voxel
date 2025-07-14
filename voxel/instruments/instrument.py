@@ -176,21 +176,47 @@ class Instrument:
         raise KeyError(f"Camera {camera_name} not found in instrument config.")
 
 
+# def for_all_methods(lock, cls):
+#     """Function that iterates through callable methods and properties in a class and wraps with lock_methods"""
+#     for attr_name in cls.__dict__:
+#         if attr_name == '__init__':
+#             continue
+#         attr = getattr(cls, attr_name)
+#         if type(attr) == _DeliminatedProperty:
+#             attr._fset = lock_methods(attr._fset, lock)
+#             attr._fget = lock_methods(attr._fget, lock)
+#         elif isinstance(attr, property):
+#             wrapped_getter = lock_methods(getattr(attr, 'fget'), lock)
+#             # don't wrap setters if none
+#             wrapped_setter = lock_methods(getattr(attr, 'fset'), lock) if getattr(attr, 'fset') is not None else None
+#             setattr(cls, attr_name, property(wrapped_getter, wrapped_setter))
+#         elif callable(attr) and not isinstance(inspect.getattr_static(cls, attr_name), staticmethod):
+#             setattr(cls, attr_name, lock_methods(attr, lock))
+#     return cls
+
+
 def for_all_methods(lock, cls):
     """Function that iterates through callable methods and properties in a class and wraps with lock_methods"""
     for attr_name in cls.__dict__:
+        # print('ATTR NAME', attr_name)
         if attr_name == '__init__':
             continue
         attr = getattr(cls, attr_name)
         if type(attr) == _DeliminatedProperty:
+            if getattr(attr, "__no_lock__", False):
+                continue
             attr._fset = lock_methods(attr._fset, lock)
             attr._fget = lock_methods(attr._fget, lock)
         elif isinstance(attr, property):
+            if getattr(attr, "__no_lock__", False):
+                continue
             wrapped_getter = lock_methods(getattr(attr, 'fget'), lock)
             # don't wrap setters if none
             wrapped_setter = lock_methods(getattr(attr, 'fset'), lock) if getattr(attr, 'fset') is not None else None
             setattr(cls, attr_name, property(wrapped_getter, wrapped_setter))
         elif callable(attr) and not isinstance(inspect.getattr_static(cls, attr_name), staticmethod):
+            if getattr(attr, "__no_lock__", False):
+                continue
             setattr(cls, attr_name, lock_methods(attr, lock))
     return cls
 

@@ -261,6 +261,12 @@ class Stage(BaseStage):
         
     def setup_report_xz(self):
         self.ms2000.setup_report_xz()
+
+    def get_xz_position_mm(self):
+        return self.ms2000.get_xz_position_mm()
+    
+    def get_xzf_position_mm(self):
+        return self.ms2000.get_xzf_position_mm()
     
     def start_report_xz(self):
         self.ms2000.start_report_xz()

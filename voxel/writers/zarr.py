@@ -494,9 +494,9 @@ class ZarrWriter(BaseWriter):
             """
             # filepath = Path(self._path, self._acquisition_name, self._filename).absolute()
             self.filename_xml = str(Path(self._path, self._acquisition_name, self._filename).absolute())
-            print('xml name', self.filename_xml)
+            # print('xml name', self.filename_xml)
             self.filename_xml = self.filename_xml[:-5]+'.xml'
-            print('xml name 2', self.filename_xml)
+            # print('xml name 2', self.filename_xml)
             filename = self.filename[:-5]+'.zarr'
             try:
                 # check if tile position already exists
@@ -646,7 +646,7 @@ class ZarrWriter(BaseWriter):
 
             self._xml_indent(root)
             tree = ET.ElementTree(root)
-            print('End of xml writing function', self.filename_xml)
+            # print('End of xml writing function', self.filename_xml)
             tree.write(self.filename_xml, xml_declaration=True, encoding='utf-8', method="xml")
         
     def _xml_indent(self, elem, level=0):

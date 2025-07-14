@@ -80,21 +80,141 @@ class SerialPort:
         """Send a serial command to the device."""
         # always reset the buffers before a new command is sent
         self.serial_port.reset_input_buffer()
-        self.serial_port.reset_output_buffer()
+        self.serial_port.reset_output_buffer() # -- can be eliminated nothing breaks
         # send the serial command to the controller
         command = bytes(f"{cmd}\r", encoding="ascii")
         self.serial_port.write(command)
         # self.print(f"Send: {command.decode(encoding='ascii')}")
  
+    def send_command_v2(self, cmd: bytes) -> None:
+        """Send a serial command to the device."""
+        # always reset the buffers before a new command is sent
+        # t0 = time.perf_counter()
+        # t_response = time.perf_counter()-t0
+        # print("Time to reset input buffer:", t_response)
+
+
+        # send the serial command to the controller
+        # t0 = time.perf_counter()
+        command = bytes(f"{cmd}\r", encoding="ascii")
+        self.serial_port.write(command)
+        # t_response = time.perf_counter()-t0
+        # print("Time to send write command:", t_response)
+ 
+    def send_command_v3(self, cmd: bytes) -> None:
+        """Send a serial command to the device."""
+        # always reset the buffers before a new command is sent
+        t0 = time.perf_counter()
+        # self.serial_port.reset_input_buffer()
+        t_response = time.perf_counter()-t0
+        print("Time to reset input buffer:", t_response)
+
+        # self.serial_port.reset_output_buffer()
+        # send the serial command to the controller
+        t0 = time.perf_counter()
+        command = bytes(f"{cmd}\r", encoding="ascii")
+        self.serial_port.write(command)
+        t_response = time.perf_counter()-t0
+        print("Time to send write command:", t_response)
+        # self.print(f"Send: {command.decode(encoding='ascii')}")
+ 
     def read_response(self) -> str:
         """Read a line from the serial response."""
-        time.sleep(0.01)
+        time.sleep(0.005)
+        
+        # t0 = time.perf_counter()
+        
         response = self.serial_port.readline()
+
+        # response = self.serial_port.read_until(b'\r\n')
+        # t_response = time.perf_counter()-t0
+        # print("Response time:", t_response, response)
         # response = self.serial_port.readall()
+        # t0 = time.perf_counter()
+        
         response = response.decode(encoding="ascii")
+        
+        # t_response = time.perf_counter()-t0
+        # print("Decode time:", t_response, response)
         # self.print(f"Recv: {response.strip()}")
         return response # in case we want to read the response
     
+    def read_response_V2(self) -> str:
+        """Read a line from the serial response."""
+        time.sleep(0.004)
+        
+        # t0 = time.perf_counter()
+        
+        response = self.serial_port.read_all()
+        # t_response = time.perf_counter()-t0
+        # print("Response time:", t_response, response)
+        # t0 = time.perf_counter()
+        
+        response = response.decode(encoding="ascii")
+        
+        # t_response = time.perf_counter()-t0
+        # print("Read response time:", t_response, response)
+        return response # in case we want to read the response
+    
+    # def read_response(self, terminator: bytes = b"\r\n",
+    #               hard_timeout: float = 0.10) -> str:
+    #     """
+    #     Read one complete reply line from the stage.
+
+    #     Parameters
+    #     ----------
+    #     terminator : bytes
+    #         Line terminator expected from the controller (default b"\r\n").
+    #     hard_timeout : float
+    #         Absolute upper-bound (in seconds) to wait for a full line
+    #         before raising TimeoutError.
+
+    #     Returns
+    #     -------
+    #     str
+    #         The reply decoded as ASCII (including the terminator).
+
+    #     Raises
+    #     ------
+    #     TimeoutError
+    #         If no complete reply is received within *hard_timeout*.
+    #     """
+    #     # ------------------------------------------------------------------ send
+    #     # t0_send = time.perf_counter()
+    #     # (caller's write happens elsewhere – no sleep needed here)
+
+    #     # ------------------------------------------------------------------ recv
+    #     buf = bytearray()
+    #     t0_recv = time.perf_counter()
+    #     while True:
+    #         # Grab everything waiting right now; `or 1` prevents a zero-length read
+    #         buf += self.serial_port.read(self.serial_port.in_waiting or 1)
+
+    #         # Finished?
+    #         if buf.endswith(terminator):
+    #             break
+
+    #         # Hard timeout guard
+    #         if time.perf_counter() - t0_recv > hard_timeout:
+    #             raise TimeoutError(f"Incomplete reply after {hard_timeout*1e3:.1f} ms: {buf!r}")
+
+    #         # Short nap to keep CPU usage low
+    #         time.sleep(0.0003)
+
+    #     # ------------------------------------------------------------------ stats
+    #     # t_overall = time.perf_counter() - t0_send
+    #     # t_response = time.perf_counter() - t0_recv
+    #     # print(f"Overall response time: {t_overall:.6f}s")
+    #     # print(f"  └─ receive time    : {t_response:.6f}s  {bytes(buf)!r}")
+
+    #     # ------------------------------------------------------------------ decode
+    #     # t0_decode = time.perf_counter()
+    #     reply_str = buf.decode("ascii")
+    #     # t_decode = time.perf_counter() - t0_decode
+    #     # print(f"  └─ decode time     : {t_decode:.6f}s  {reply_str}")
+
+    #     return reply_str
+        
     def read_response_linebyline(self) -> str:
         """Read a line from the serial response."""
         response = self.serial_port.read()
