@@ -20,7 +20,7 @@ SCAN_PATTERN = {
 
 
 class MS2000ControllerSingleton(MS2000, metaclass=Singleton):
-    def __init__(self, com_port, baud_rate=115200):
+    def __init__(self, com_port, baud_rate=9600):
         super(MS2000ControllerSingleton, self).__init__(com_port, baud_rate)
 
 

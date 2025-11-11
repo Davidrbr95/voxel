@@ -120,7 +120,7 @@ class SerialPort:
  
     def read_response(self) -> str:
         """Read a line from the serial response."""
-        time.sleep(0.005)
+        time.sleep(0.1)
         
         # t0 = time.perf_counter()
         

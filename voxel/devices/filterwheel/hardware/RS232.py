@@ -73,7 +73,12 @@ class RS232(object):
 
     def read(self, response_len):
         response = self.tty.read(response_len)
-        return response.decode(self.encoding)
+        # return response.decode(self.encoding)
+        try:
+            return response.decode(self.encoding, errors='ignore')
+        except UnicodeDecodeError:
+            return response
+        
 
     def readline(self):
         response = self.tty.readline()

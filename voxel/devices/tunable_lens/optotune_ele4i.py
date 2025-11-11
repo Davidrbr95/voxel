@@ -37,6 +37,7 @@ class TunableLens(BaseTunableLens):
         self.id = self.send_command('X', '>x8s')[0].decode('ascii')
         self.log.info(f"The tunable lens has this ID {self.id}")
         self._current = 0.0 #sets the tuneable lens starts at zero
+        self._current_dictionary = {}
 
     @property
     def mode(self):
@@ -61,6 +62,26 @@ class TunableLens(BaseTunableLens):
         mode_list = MODES[mode]
         self.send_command(mode_list[0])
         self.log.info(f"Sent comamnd to mode: {mode_list}")
+
+
+    @property
+    def current_dictionary(self) -> float:
+        """
+        Retrieves the current position of the device in real units.
+
+        :return: Current position in real units (e.g., mm).
+        """
+        
+        return self._current_dictionary 
+
+    @current_dictionary.setter
+    def current_dictionary(self, position):
+        """
+        Moves the device to the specified real position.
+
+        :param position: Target position in real units (e.g., mm).
+        """
+        self._current_dictionary = position
 
     @property
     def current(self):

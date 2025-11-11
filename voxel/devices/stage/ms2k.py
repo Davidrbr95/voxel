@@ -113,7 +113,7 @@ class MS2000(SerialPort):
                 dict_reply[words[0]] = val
         return dict_reply
     
-    def __init__(self, com_port: str, baud_rate: int=115200, report: str=True):
+    def __init__(self, com_port: str, baud_rate: int=9600, report: str=True):
         super().__init__(com_port, baud_rate, report)
         # validate baud_rate input
         if baud_rate in self.BAUD_RATES:
