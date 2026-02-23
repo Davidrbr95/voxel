@@ -18,8 +18,8 @@ from xml.etree import ElementTree as ET
 from voxel.descriptors.deliminated_property import DeliminatedProperty
 from voxel.writers.base import BaseWriter
 
-CHUNK_COUNT_PX = 64
-DIVISIBLE_FRAME_COUNT_PX = 64
+CHUNK_COUNT_PX = 32
+DIVISIBLE_FRAME_COUNT_PX = 32
 
 COMPRESSION_TYPES = {
     "lz4shuffle": pw.eCompressionAlgorithmShuffleLZ4,

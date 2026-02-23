@@ -115,10 +115,27 @@ class Stage(BaseStage):
         # Optionally wait after all moves are completed
         self.ms2000.wait_for_device()
 
+    def move_absolute_threeaxis_sloq_mm(self, tile_position):
+        # Iterate through each axis in the tile_position
+        for axis, position in tile_position.items():
+            # Call the move_absolute_mm function for each axis
+            self.ms2000.move_axis_slow(axis, round(position * 10000))  # Convert mm to 1/10 micron
+            self.log.info(f"Moving {axis} axis to {position} mm")
+            
+        # Optionally wait after all moves are completed
+        self.ms2000.wait_for_device()
+
     def move_absolute_mm(self, position: float, wait: bool = True):
         w_text = "" if wait else "NOT "
         self.log.info(f"Absolute move to: {self.hardware_axis}={position} mm and {w_text}waiting.")
         self.ms2000.move_axis(self.hardware_axis, round(position * 10000))  # Convert mm to 1/10 micron
+        if wait:
+            self.ms2000.wait_for_device()
+
+    def move_absolute_slow_mm(self, position: float, wait: bool = True):
+        w_text = "" if wait else "NOT "
+        self.log.info(f"Absolute move to: {self.hardware_axis}={position} mm and {w_text}waiting.")
+        self.ms2000.move_axis_slow(self.hardware_axis, round(position * 10000))  # Convert mm to 1/10 micron
         if wait:
             self.ms2000.wait_for_device()
 
@@ -264,9 +281,15 @@ class Stage(BaseStage):
 
     def get_xz_position_mm(self):
         return self.ms2000.get_xz_position_mm()
+
+    def get_xz_position_slow_mm(self):
+        return self.ms2000.get_xz_position_slow_mm()
     
     def get_xzf_position_mm(self):
         return self.ms2000.get_xzf_position_mm()
+
+    def get_xzf_position_slow_mm(self):
+        return self.ms2000.get_xzf_position_slow_mm()
     
     def start_report_xz(self):
         self.ms2000.start_report_xz()

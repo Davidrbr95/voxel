@@ -14,7 +14,7 @@ import tifffile
 from voxel.descriptors.deliminated_property import DeliminatedProperty
 from voxel.writers.base import BaseWriter
 
-CHUNK_COUNT_PX = 64
+CHUNK_COUNT_PX = 32
 
 COMPRESSION_TYPES = {"none": "none"}
 
@@ -129,7 +129,7 @@ class TiffWriter(BaseWriter):
         chunk_shape_map = {
             "x": self._column_count_px,
             "y": self._row_count_px,
-            "z": CHUNK_COUNT_PX,
+            "z": 2,
         }
         shm_shape = [chunk_shape_map[x] for x in chunk_dim_order]
         shm_nbytes = int(
@@ -164,6 +164,7 @@ class TiffWriter(BaseWriter):
         filepath = Path(self._path, self._acquisition_name, self._filename).absolute()
 
         writer = tifffile.TiffWriter(filepath, bigtiff=True)
+        # writer = tifffile.TiffWriter(filepath)
 
         metadata = {
             "axes": "ZYX",

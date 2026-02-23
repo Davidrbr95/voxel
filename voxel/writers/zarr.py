@@ -18,8 +18,8 @@ from PyImarisWriter import PyImarisWriter as pw
 
 from voxel.writers.base import BaseWriter
 
-CHUNK_COUNT_PX = 64
-DIVISIBLE_FRAME_COUNT_PX = 64
+CHUNK_COUNT_PX = 32
+DIVISIBLE_FRAME_COUNT_PX = 32
 
 COMPRESSIONS = {
     "lz4": aqz.CompressionCodec.BLOSC_LZ4,
@@ -422,13 +422,14 @@ class ZarrWriter(BaseWriter):
         # normalized scaling in z (scan)
         scale_z = size_z / size_y
         # shearing based on theta and y/z pixel sizes
-        shear = np.tan(self.theta_deg * np.pi / 180.0) * size_y / size_z
+        # shear = np.tan(self.theta_deg * np.pi / 180.0) * size_y / size_z
+        shear = -1.414214
         # shift tile in x, unit pixels
         shift_x = scale_x * (self._x_position_mm * 1000 / size_z)
         # shift tile in y, unit pixels
-        shift_y = 1*scale_y * (self._y_position_mm * 1000 / size_x)
+        shift_y = scale_y * (self._y_position_mm * 1000 / size_x)
         # shift tile in z, unit pixels
-        shift_z = -1*scale_z * (self._z_position_mm * 1000 / size_y)
+        shift_z = scale_z * (self._z_position_mm * 1000 / size_y)
 
         affine_deskew = np.array(
             ([1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, shear, 1.0, 0.0])
@@ -594,12 +595,12 @@ class ZarrWriter(BaseWriter):
 
             # Transformations of coordinate system
             vregs = ET.SubElement(root, 'ViewRegistrations')
-            print('Before registrations', self.ntimes, self.nsetups)
+            # print('Before registrations', self.ntimes, self.nsetups)
             # print(self.setup_id_present[itime][isetup])
             for itime in range(self.ntimes):
                 for isetup in range(self.nsetups):
-                    print(self.setup_id_present)
-                    print(self.setup_id_present[itime][isetup])
+                    # print(self.setup_id_present)
+                    # print(self.setup_id_present[itime][isetup])
                     if self.setup_id_present[itime][isetup]:
                         vreg = ET.SubElement(vregs, 'ViewRegistration')
                         vreg.set('timepoint', str(itime))
@@ -693,7 +694,7 @@ class ZarrWriter(BaseWriter):
         logger.addHandler(log_handler)
         filepath = Path(self._path, self._acquisition_name, self._filename).absolute()
 
-        print(self._compression, aqz.Compressor.BLOSC1, self._clevel, self._shuffle)
+        # print(self._compression, aqz.Compressor.BLOSC1, self._clevel, self._shuffle)
         compression_settings = aqz.CompressionSettings(
             codec=self._compression,  # compression codec
             compressor=aqz.Compressor.BLOSC1,  # compressor
@@ -745,20 +746,20 @@ class ZarrWriter(BaseWriter):
             # Attach a reference to the data from shared memory.
             shm = SharedMemory(self.shm_name, create=False, size=shm_nbytes)
             frames = np.ndarray(shm_shape, self._data_type, buffer=shm.buf)
-            shared_log_queue.put(
-                f"{self._filename}: writing chunk " f"{chunk_num + 1}/{chunk_total} of size {frames.shape}."
-            )
+            # shared_log_queue.put(
+            #     f"{self._filename}: writing chunk " f"{chunk_num + 1}/{chunk_total} of size {frames.shape}."
+            # )
             start_time = perf_counter()
             # Put the frames into the stream
             stream.append(frames)
             frames = None
-            shared_log_queue.put(f"{self._filename}: writing chunk took " f"{perf_counter() - start_time:.2f} [s]")
+            # shared_log_queue.put(f"{self._filename}: writing chunk took " f"{perf_counter() - start_time:.2f} [s]")
             shm.close()
             self.done_reading.set()
             # update shared value progress range 0-1
             shared_progress.value = (chunk_num + 1) / chunk_total
 
-            shared_log_queue.put(f"{self._filename}: {self._progress.value * 100:.2f} [%] complete.")
+            # shared_log_queue.put(f"{self._filename}: {self._progress.value * 100:.2f} [%] complete.")
 
         # check and empty queue to avoid code hanging in process
         if not shared_log_queue.empty:

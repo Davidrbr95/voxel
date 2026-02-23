@@ -76,6 +76,7 @@ class Profiler(BaseCamera):
         print("----")
         print('INITIALIZING')
         self.log.info("INITIALIZNG PROFILER")
+        self.camera_ready_event = None
         # self.close()
         # self.prepare()
         
@@ -158,6 +159,12 @@ class Profiler(BaseCamera):
         if res != 0:
             print("Error prestarting")
         # self.stop()
+
+        if hasattr(self, 'camera_ready_event') and self.camera_ready_event is not None:
+            print("[Profiler] Network Ready. Signaling Engine to start Stage.")
+            self.camera_ready_event.set()
+        else:
+            print("[Profiler] Warning: camera_ready_event is None. Cannot signal Engine.")
         return
 
     def massfunc(self):
@@ -267,8 +274,8 @@ class Profiler(BaseCamera):
         if self.run_first:
             self.highspeed_com_setup(self.total_lines)
 
-        time.sleep(0.5) ## Extremely important sleep here!!!
-        self.camera_ready_event.set()
+        time.sleep(1) ## Extremely important sleep here!!!
+        # self.camera_ready_event.set()
 
         print('STARTING THREAD')
         self.log.info("start_thread")
@@ -278,6 +285,7 @@ class Profiler(BaseCamera):
         if self.run_first:
             res = LJXAwrap.LJX8IF_StartHighSpeedDataCommunication(self.device_id)
             print("Starting high speed communication for device", self.device_id)
+            # self.camera_ready_event.set()
             self.log.info(f"starting the ocmmunication for devices")
             if res != 0:
                 print("Error starting")

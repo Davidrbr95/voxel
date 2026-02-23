@@ -475,6 +475,12 @@ class MS2000(SerialPort):
         self.send_command_v2(f"MOVE {axis}={distance}")
         self.read_response_V2()
         # time.sleep(0.004)
+
+    def move_axis_slow(self, axis: str, distance: int) -> None:
+        """Move the stage with an absolute move."""
+        self.send_command_v2(f"MOVE {axis}={distance}")
+        self.read_response_slow()
+        # time.sleep(0.004)
  
     def set_max_speed(self, axis: str, speed:int) -> None:
         # traceback.print_stack()
@@ -533,11 +539,27 @@ class MS2000(SerialPort):
         # print(response)
         return float(response.split(" ")[1])/10000.0, float(response.split(" ")[2])/10000.0
     
+    def get_xz_position_slow_mm(self) -> float:
+        """Return the position of the stage in mm for x and z"""
+        # t0 = time.perf_counter()
+        self.send_command_v2(f"WHERE X Z")
+        # t_response = time.perf_counter()-t0
+        # print("Send command time:", t_response)
+        response = self.read_response_slow()
+        # print(response)
+        return float(response.split(" ")[1])/10000.0, float(response.split(" ")[2])/10000.0
+    
     def get_xzf_position_mm(self) -> float:
         """Return the position of the stage in mm for x and z"""
         self.send_command_v2(f"WHERE X Z F")
         response = self.read_response_V2()
-        return float(response.split(" ")[1])/10000.0, float(response.split(" ")[2])/10000.0, float(response.split(" ")[2])/10000.0
+        return float(response.split(" ")[1])/10000.0, float(response.split(" ")[2])/10000.0, float(response.split(" ")[3])/10000.0
+    
+    def get_xzf_position_slow_mm(self) -> float:
+        """Return the position of the stage in mm for x and z"""
+        self.send_command_v2(f"WHERE X Z F")
+        response = self.read_response_slow()
+        return float(response.split(" ")[1])/10000.0, float(response.split(" ")[2])/10000.0, float(response.split(" ")[3])/10000.0
     
     def get_backlash(self, axis: str):
         """Return the backslash of the stage in mm."""
@@ -547,7 +569,12 @@ class MS2000(SerialPort):
     
     def set_backlash(self, axis: str, backlash:float):
         """Return the backslash of the stage in mm."""
-        self.send_command(f"B {axis}={backlash}\r")
+        if axis.upper() == "Z":
+            print(f"Setting B Z={backlash} F={backlash}")
+            self.send_command(f"B Z={backlash} F={backlash}\r")
+        else:
+            print(f"Setting B {axis}={backlash}")
+            self.send_command(f"B {axis}={backlash}\r")
         self.read_response()
         return {axis: backlash}
     
@@ -737,53 +764,8 @@ class MS2000(SerialPort):
         cmd = f"KD Z=10"
         self.send_command(cmd)
         reply = self.read_response()
-
-    def set_smooth_z_motion_asi_parameters(self) -> None:
-        cmd = f"KP Z=5 F=5"
-        self.send_command(cmd)
-        reply = self.read_response()
-
-        cmd = f"KI Z=0 F=0"
-        self.send_command(cmd)
-        reply = self.read_response()
-
-        cmd = f"KD Z=200 F=200"
-        self.send_command(cmd)
-        reply = self.read_response()
-
-        cmd = f"PC Z=1.0 F=1.0"
-        self.send_command(cmd)
-        reply = self.read_response()
-
-        cmd = f"E Z=5.0 F=5.0"
-        self.send_command(cmd)
-        reply = self.read_response()
-
-        cmd = f"B Z=0 F=0"
-        self.send_command(cmd)
-        reply = self.read_response()
     
     def set_default_z_motion_asi_parameters(self) -> None:
-        # cmd = f"KP Z=125 F=125"
-        # self.send_command(cmd)
-        # reply = self.read_response()
-
-        # cmd = f"KI Z=12 F=12"
-        # self.send_command(cmd)
-        # reply = self.read_response()
-
-        # cmd = f"KD Z=0 F=0"
-        # self.send_command(cmd)
-        # reply = self.read_response()
-
-        # cmd = f"PC Z=0.000006 F=0.000006"
-        # self.send_command(cmd)
-        # reply = self.read_response()
-
-        # cmd = f"E Z=0.000200 F=0.000200"
-        # self.send_command(cmd)
-        # reply = self.read_response()
-
         cmd = f"B Z=0 F=0"
         self.send_command(cmd)
         reply = self.read_response()

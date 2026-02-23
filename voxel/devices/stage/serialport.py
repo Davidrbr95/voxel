@@ -141,7 +141,24 @@ class SerialPort:
     
     def read_response_V2(self) -> str:
         """Read a line from the serial response."""
-        time.sleep(0.004)
+        time.sleep(0.005)
+        
+        # t0 = time.perf_counter()
+        
+        response = self.serial_port.read_all()
+        # t_response = time.perf_counter()-t0
+        # print("Response time:", t_response, response)
+        # t0 = time.perf_counter()
+        
+        response = response.decode(encoding="ascii")
+        
+        # t_response = time.perf_counter()-t0
+        # print("Read response time:", t_response, response)
+        return response # in case we want to read the response
+    
+    def read_response_slow(self) -> str:
+        """Read a line from the serial response."""
+        time.sleep(0.5)
         
         # t0 = time.perf_counter()
         
