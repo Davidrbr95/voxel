@@ -473,7 +473,7 @@ class MS2000(SerialPort):
     def move_axis(self, axis: str, distance: int) -> None:
         """Move the stage with an absolute move."""
         self.send_command_v2(f"MOVE {axis}={distance}")
-        self.read_response_V2()
+        self.read_response_FAST()
         # time.sleep(0.004)
 
     def move_axis_slow(self, axis: str, distance: int) -> None:
@@ -535,7 +535,7 @@ class MS2000(SerialPort):
         self.send_command_v2(f"WHERE X Z")
         # t_response = time.perf_counter()-t0
         # print("Send command time:", t_response)
-        response = self.read_response_V2()
+        response = self.read_response_FAST()
         # print(response)
         return float(response.split(" ")[1])/10000.0, float(response.split(" ")[2])/10000.0
     
@@ -751,17 +751,17 @@ class MS2000(SerialPort):
 
 
     def set_z_kp(self) -> None:
-        cmd = f"KP Z=250"
+        cmd = f"KP Z=0"
         self.send_command(cmd)
         reply = self.read_response()
 
     def set_z_ki(self) -> None:
-        cmd = f"KI Z=20"
+        cmd = f"KI Z=0"
         self.send_command(cmd)
         reply = self.read_response()
     
     def set_z_kd(self) -> None:
-        cmd = f"KD Z=10"
+        cmd = f"KD Z=0"
         self.send_command(cmd)
         reply = self.read_response()
     

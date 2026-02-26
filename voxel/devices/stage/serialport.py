@@ -138,10 +138,31 @@ class SerialPort:
         # print("Decode time:", t_response, response)
         # self.print(f"Recv: {response.strip()}")
         return response # in case we want to read the response
+
+    def read_response_FAST(self) -> str:
+        """Read a line from the serial response."""
+        time.sleep(0.005)
+        
+        # t0 = time.perf_counter()
+        
+        response = self.serial_port.readline()
+
+        # response = self.serial_port.read_until(b'\r\n')
+        # t_response = time.perf_counter()-t0
+        # print("Response time:", t_response, response)
+        # response = self.serial_port.readall()
+        # t0 = time.perf_counter()
+        
+        response = response.decode(encoding="ascii")
+        
+        # t_response = time.perf_counter()-t0
+        # print("Decode time:", t_response, response)
+        # self.print(f"Recv: {response.strip()}")
+        return response # in case we want to read the response
     
     def read_response_V2(self) -> str:
         """Read a line from the serial response."""
-        time.sleep(0.005)
+        time.sleep(0.006)
         
         # t0 = time.perf_counter()
         
