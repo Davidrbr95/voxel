@@ -427,7 +427,7 @@ class ZarrWriter(BaseWriter):
         # shift tile in x, unit pixels
         shift_x = scale_x * (self._x_position_mm * 1000 / size_z)
         # shift tile in y, unit pixels
-        shift_y = scale_y * (self._y_position_mm * 1000 / size_x)
+        shift_y = -scale_y * (self._y_position_mm * 1000 / size_x)
         # shift tile in z, unit pixels
         shift_z = scale_z * (self._z_position_mm * 1000 / size_y)
 

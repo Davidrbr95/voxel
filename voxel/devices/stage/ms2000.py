@@ -306,6 +306,9 @@ class Stage(BaseStage):
 
     def set_z_kd(self):
         self.ms2000.set_z_kd()
+
+    def set_z_pc(self):
+        self.ms2000.set_z_pc()
     
     def set_smooth_z_motion_asi_parameters(self):
         self.ms2000.set_smooth_z_motion_asi_parameters()
