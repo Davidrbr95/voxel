@@ -14,6 +14,8 @@ import numpy as np
 import acquire_zarr as aqz
 from xml.etree import ElementTree as ET
 from PyImarisWriter import PyImarisWriter as pw
+import json
+import zarr
 
 
 from voxel.writers.base import BaseWriter
@@ -27,12 +29,128 @@ COMPRESSIONS = {
     "none": aqz.CompressionCodec.NONE,
 }
 
-DATA_TYPES = {"unit8": aqz.DataType.UINT16, "uint16": aqz.DataType.UINT16}
+DATA_TYPES = {"uint8": aqz.DataType.UINT8, "uint16": aqz.DataType.UINT16}
 
 VERSIONS = {"v2": aqz.ZarrVersion.V2, "v3": aqz.ZarrVersion.V3}
 
 SHUFFLES = {True: 1, False: 0}
+import json
+from pathlib import Path
 
+def ensure_zarr_v2_root_group(store_path: str) -> None:
+    """
+    Ensure store_path is a valid Zarr v2 *group* container by writing .zgroup
+    (and ensuring .zattrs exists). This is what N5ZarrReader expects to see
+    at the container root.
+    """
+    p = Path(store_path)
+    p.mkdir(parents=True, exist_ok=True)
+
+    zgroup = p / ".zgroup"
+    if not zgroup.exists():
+        zgroup.write_text(json.dumps({"zarr_format": 2}, indent=2))
+
+    zattrs = p / ".zattrs"
+    if not zattrs.exists():
+        zattrs.write_text(json.dumps({}, indent=2))
+
+def write_ngff_zattrs_tczyx(
+    store_path: str,
+    dz_um: float,
+    dy_um: float,
+    dx_um: float,
+    *,
+    name: str = None,
+    channel_labels=None,
+    write_omero: bool = True,
+    version: str = "0.4",
+    unit: str = "micrometer",
+    datasets_paths=None,
+):
+    """
+    Minimal OME-NGFF v0.4 metadata for a dataset stored as arrays at:
+        <store>/0, <store>/1, <store>/2, ...
+    but with 5D axes: t,c,z,y,x (t=c can be singleton).
+    Writes <store>/.zattrs (root attrs).
+
+    Parameters
+    ----------
+    store_path : str
+        Path to the zarr store folder (e.g. ".../tile_0.zarr")
+    dz_um, dy_um, dx_um : float
+        Voxel sizes in micrometers (Z, Y, X).
+    channel_labels : list[str] | None
+        Channel labels for the OMERO block. Defaults to ["ch0"].
+    datasets_paths : list[str] | None
+        Explicit list of pyramid dataset paths, e.g. ["0","1","2"].
+        If None, auto-detect numeric keys present at root.
+    """
+    store = Path(store_path)
+    if name is None:
+        name = store.name
+
+    if channel_labels is None:
+        channel_labels = ["ch0"]
+
+    # Detect pyramid levels at the store root: "0", "1", "2", ...
+    if datasets_paths is None:
+        level_keys = []
+        try:
+            import zarr
+            root = zarr.open(str(store), mode="r")
+            level_keys = sorted([k for k in root.keys() if str(k).isdigit()], key=lambda x: int(x))
+        except Exception:
+            level_keys = []
+
+        # If nothing detected, but "0" exists on disk, assume single level
+        if not level_keys and (store / "0").exists():
+            level_keys = ["0"]
+
+        datasets_paths = level_keys if level_keys else ["0"]
+
+    # Coordinate transforms per level. We assume 2x downsample per level if multiple.
+    datasets = []
+    for lvl, k in enumerate(datasets_paths):
+        s = float(2 ** lvl)  # if you downsample differently, set explicitly
+        datasets.append(
+            {
+                "path": str(k),
+                "coordinateTransformations": [
+                    {
+                        "type": "scale",
+                        # TCZYX scale: t,c have scale 1
+                        "scale": [1.0, 1.0, dz_um * s, dy_um * s, dx_um * s],
+                    }
+                ],
+            }
+        )
+
+    zattrs = {
+        "multiscales": [
+            {
+                "version": version,
+                "name": name,
+                "axes": [
+                    {"name": "t", "type": "time"},
+                    {"name": "c", "type": "channel"},
+                    {"name": "z", "type": "space", "unit": unit},
+                    {"name": "y", "type": "space", "unit": unit},
+                    {"name": "x", "type": "space", "unit": unit},
+                ],
+                "datasets": datasets,
+            }
+        ]
+    }
+
+    # Optional OMERO block (Fiji likes having dtype + omero info sometimes)
+    if write_omero:
+        # Minimal channel list
+        zattrs["omero"] = {
+            "channels": [{"label": lbl, "active": True} for lbl in channel_labels],
+            # You can optionally add rdefs, windows, colors, etc. but not required
+        }
+
+    (store / ".zattrs").write_text(json.dumps(zattrs, indent=2))
 
 class ZarrWriter(BaseWriter):
     """
@@ -422,13 +540,15 @@ class ZarrWriter(BaseWriter):
         # normalized scaling in z (scan)
         scale_z = size_z / size_y
         # shearing based on theta and y/z pixel sizes
-        shear = np.tan(self.theta_deg * np.pi / 180.0) * size_y / size_z
+        # shear = np.tan(self.theta_deg * np.pi / 180.0) * size_y / size_z
+        shear = -np.sqrt(2)
         # shift tile in x, unit pixels
         shift_x = scale_x * (self._x_position_mm * 1000 / size_z)
         # shift tile in y, unit pixels
-        shift_y = 1*scale_y * (self._y_position_mm * 1000 / size_x)
+        shift_y = scale_y * (self._y_position_mm * 1000 / size_x)
         # shift tile in z, unit pixels
-        shift_z = -1*scale_z * (self._z_position_mm * 1000 / size_y)
+        # shift_z = -1*scale_z * (self._z_position_mm * 1000 / size_y)
+        shift_z = - (self._z_position_mm * 1000 / size_y)
 
         affine_deskew = np.array(
             ([1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, shear, 1.0, 0.0])
@@ -534,6 +654,24 @@ class ZarrWriter(BaseWriter):
             el = ET.SubElement(imgload, 'zarr')
             el.set('type', 'relative')
             el.text = os.path.basename(filename)
+
+            # After:
+            # el = ET.SubElement(imgload, 'zarr')
+            # el.set('type', 'relative')
+            # el.text = os.path.basename(filename)
+
+            zgroups = ET.SubElement(imgload, 'zgroups')
+
+            # Map each present (setup, timepoint) to the internal path in the zarr container.
+            # For your current layout, everything is at path "0".
+            for itime in range(self.ntimes):
+                for isetup in range(self.nsetups):
+                    if self.setup_id_present[itime][isetup]:
+                        zg = ET.SubElement(zgroups, 'zgroup')
+                        zg.set('setup', str(isetup))
+                        zg.set('timepoint', str(itime))
+                        ET.SubElement(zg, 'path').text = "0"
+
             # write ViewSetups
             viewsets = ET.SubElement(seqdesc, 'ViewSetups')
             for iillumination in range(self.nilluminations):
@@ -692,25 +830,55 @@ class ZarrWriter(BaseWriter):
         log_handler.setFormatter(log_formatter)
         logger.addHandler(log_handler)
         filepath = Path(self._path, self._acquisition_name, self._filename).absolute()
+        store_level0 = filepath / "0"
+        os.makedirs(store_level0, exist_ok=True)
+        ensure_zarr_v2_root_group(str(filepath))
+        print('CLEVEL ', self._clevel)
 
         print(self._compression, aqz.Compressor.BLOSC1, self._clevel, self._shuffle)
+        # compression_settings = aqz.CompressionSettings(
+        #     codec=self._compression,  # compression codec
+        #     compressor=aqz.Compressor.BLOSC1,  # compressor
+        #     clevel=self._clevel,  # compression level
+        #     shuffle=self._shuffle,  # shuffle filter
+        # )
+        # Determine compressor based on codec
+        if self._compression == aqz.CompressionCodec.NONE:
+            current_compressor = aqz.Compressor.NONE
+        else:
+            current_compressor = aqz.Compressor.BLOSC1
+
         compression_settings = aqz.CompressionSettings(
             codec=self._compression,  # compression codec
-            compressor=aqz.Compressor.BLOSC1,  # compressor
+            compressor=current_compressor,  # DYNAMICALLY SET
             clevel=self._clevel,  # compression level
             shuffle=self._shuffle,  # shuffle filter
         )
-
+        
         settings = aqz.StreamSettings(
-            store_path=str(filepath),
+            store_path=str(store_level0),
             data_type=DATA_TYPES[self._data_type],
             version=VERSIONS[self._version],
             multiscale=self._multiscale,
-            # compression=compression_settings,
+            compression=compression_settings, # ITS COMMENTED OUT HERE <<<
         )
-
+        
         settings.dimensions.extend(
             [
+                aqz.Dimension(
+                    name="t",
+                    type=aqz.DimensionType.TIME,
+                    array_size_px=1,
+                    chunk_size_px=1,
+                    shard_size_chunks=1,
+                ),
+                aqz.Dimension(
+                    name="c",
+                    type=aqz.DimensionType.CHANNEL,
+                    array_size_px=1,
+                    chunk_size_px=1,
+                    shard_size_chunks=1,
+                ),
                 aqz.Dimension(
                     name="z",
                     type=aqz.DimensionType.SPACE,
@@ -750,6 +918,7 @@ class ZarrWriter(BaseWriter):
             )
             start_time = perf_counter()
             # Put the frames into the stream
+            frames_5d = frames[None, None, ...]
             stream.append(frames)
             frames = None
             shared_log_queue.put(f"{self._filename}: writing chunk took " f"{perf_counter() - start_time:.2f} [s]")
@@ -763,3 +932,47 @@ class ZarrWriter(BaseWriter):
         # check and empty queue to avoid code hanging in process
         if not shared_log_queue.empty:
             shared_log_queue.get_nowait()
+    
+    def finalize(self):
+        """
+        Call after acquisition completes (or in a finally block).
+        Ensures writer process ended and writes NGFF metadata + BDV XML.
+        """
+        filepath = Path(self._path, self._acquisition_name, self._filename).absolute()
+
+        # ensure process finished
+        # if getattr(self, "_process", None) is not None:
+        #     if self._process.is_alive():
+        #         self._process.join(timeout=30)
+        #     if self._process.is_alive():
+        #         raise RuntimeError("Writer process did not terminate in finalize().")
+
+        # voxel sizes (your stored array is effectively Z,Y,X in space; we publish TCZYX)
+        dz = float(self._z_voxel_size_um)
+        dy = float(self._y_voxel_size_um * np.cos(self.theta_deg * np.pi / 180.0))
+        dx = float(self._x_voxel_size_um)
+
+        # Channel labels: if each store is per-channel, keep single label
+        ch_label = f"ch{getattr(self, '_channel', 0)}"
+
+        # Write OME-NGFF root .zattrs with TCZYX axes
+        view_root = filepath/"0"
+        try:
+            write_ngff_zattrs_tczyx(
+                str(view_root),
+                dz_um=dz,
+                dy_um=dy,
+                dx_um=dx,
+                channel_labels=[ch_label],
+                datasets_paths=None,  # optional explicit; otherwise auto-detect
+            )
+        except Exception as e:
+            self.log.exception("Failed to write NGFF .zattrs: %s", e)
+
+        # Your BDV XML (for BigStitcher) — keep if you need it
+        try:
+            self.write_xml()
+        except Exception as e:
+            self.log.exception("Failed to write BDV XML: %s", e)
+
+

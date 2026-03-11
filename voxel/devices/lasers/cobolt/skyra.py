@@ -40,7 +40,7 @@ class Cmd(StrEnum):
 class Query(StrEnum):
     AnalogModulationMode = "games?"
     DigitalModulationMode = "gdmes?"
-    PowerSetpoint = "p?",
+    PowerSetpoint = "p?"
     ActualPower = "pa?"
 
 
@@ -193,10 +193,15 @@ class SkyraLaser(BaseLaser):
     def temperature_c(self):
         return None
 
+    # @property
+    # def max_power(self):
+    #     print('AT MAX POWER property')
+    #     if self._inst.constant_current == 'ON':
+    #         return int((round(self._coefficients_curve().subs(symbols('x'), 100), 1)))
+    #     else:
+    #         return int(self._max_power_mw)
+
     @property
     def max_power(self):
-        print('AT MAX POWER property')
-        if self._inst.constant_current == 'ON':
-            return int((round(self._coefficients_curve().subs(symbols('x'), 100), 1)))
-        else:
-            return int(self._max_power_mw)
+        print("??", int((round(self._coefficients_curve().subs(symbols('x'), 100), 1))))
+        return int((round(self._coefficients_curve().subs(symbols('x'), 100), 1)))
