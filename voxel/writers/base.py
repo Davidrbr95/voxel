@@ -498,14 +498,12 @@ class BaseWriter:
         """
 
         self.log.info(f"{self._filename}: waiting to finish.")
-        self._process.join(timeout=5)
+        # Do not force-terminate after a short timeout, otherwise tail chunks
+        # can be dropped when writes are slow.
+        self._process.join()
         # log the finished writer %
         # print('wait to finish running again')
         self.log.info(f'progress percent: {self.progress}')
-        if self._process.is_alive():
-            self.log.error(f"{self._filename}: writer process did not finish in time.")
-            # Handle the situation, possibly terminate the process
-            self._process.terminate()
 
     @abstractmethod
     def delete_files(self):

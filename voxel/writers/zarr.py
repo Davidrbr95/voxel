@@ -1,7 +1,10 @@
+
+
 import logging
 import multiprocessing
 import os
 import sys
+import json
 from ctypes import c_wchar
 from math import ceil
 from multiprocessing import Array, Process
@@ -14,8 +17,6 @@ import numpy as np
 import acquire_zarr as aqz
 from xml.etree import ElementTree as ET
 from PyImarisWriter import PyImarisWriter as pw
-import json
-import zarr
 
 
 from voxel.writers.base import BaseWriter
@@ -29,128 +30,12 @@ COMPRESSIONS = {
     "none": aqz.CompressionCodec.NONE,
 }
 
-DATA_TYPES = {"uint8": aqz.DataType.UINT8, "uint16": aqz.DataType.UINT16}
+DATA_TYPES = {"unit8": aqz.DataType.UINT16, "uint16": aqz.DataType.UINT16}
 
 VERSIONS = {"v2": aqz.ZarrVersion.V2, "v3": aqz.ZarrVersion.V3}
 
 SHUFFLES = {True: 1, False: 0}
-import json
-from pathlib import Path
 
-def ensure_zarr_v2_root_group(store_path: str) -> None:
-    """
-    Ensure store_path is a valid Zarr v2 *group* container by writing .zgroup
-    (and ensuring .zattrs exists). This is what N5ZarrReader expects to see
-    at the container root.
-    """
-    p = Path(store_path)
-    p.mkdir(parents=True, exist_ok=True)
-
-    zgroup = p / ".zgroup"
-    if not zgroup.exists():
-        zgroup.write_text(json.dumps({"zarr_format": 2}, indent=2))
-
-    zattrs = p / ".zattrs"
-    if not zattrs.exists():
-        zattrs.write_text(json.dumps({}, indent=2))
-
-def write_ngff_zattrs_tczyx(
-    store_path: str,
-    dz_um: float,
-    dy_um: float,
-    dx_um: float,
-    *,
-    name: str = None,
-    channel_labels=None,
-    write_omero: bool = True,
-    version: str = "0.4",
-    unit: str = "micrometer",
-    datasets_paths=None,
-):
-    """
-    Minimal OME-NGFF v0.4 metadata for a dataset stored as arrays at:
-        <store>/0, <store>/1, <store>/2, ...
-    but with 5D axes: t,c,z,y,x (t=c can be singleton).
-    Writes <store>/.zattrs (root attrs).
-
-    Parameters
-    ----------
-    store_path : str
-        Path to the zarr store folder (e.g. ".../tile_0.zarr")
-    dz_um, dy_um, dx_um : float
-        Voxel sizes in micrometers (Z, Y, X).
-    channel_labels : list[str] | None
-        Channel labels for the OMERO block. Defaults to ["ch0"].
-    datasets_paths : list[str] | None
-        Explicit list of pyramid dataset paths, e.g. ["0","1","2"].
-        If None, auto-detect numeric keys present at root.
-    """
-    store = Path(store_path)
-    if name is None:
-        name = store.name
-
-    if channel_labels is None:
-        channel_labels = ["ch0"]
-
-    # Detect pyramid levels at the store root: "0", "1", "2", ...
-    if datasets_paths is None:
-        level_keys = []
-        try:
-            import zarr
-            root = zarr.open(str(store), mode="r")
-            level_keys = sorted([k for k in root.keys() if str(k).isdigit()], key=lambda x: int(x))
-        except Exception:
-            level_keys = []
-
-        # If nothing detected, but "0" exists on disk, assume single level
-        if not level_keys and (store / "0").exists():
-            level_keys = ["0"]
-
-        datasets_paths = level_keys if level_keys else ["0"]
-
-    # Coordinate transforms per level. We assume 2x downsample per level if multiple.
-    datasets = []
-    for lvl, k in enumerate(datasets_paths):
-        s = float(2 ** lvl)  # if you downsample differently, set explicitly
-        datasets.append(
-            {
-                "path": str(k),
-                "coordinateTransformations": [
-                    {
-                        "type": "scale",
-                        # TCZYX scale: t,c have scale 1
-                        "scale": [1.0, 1.0, dz_um * s, dy_um * s, dx_um * s],
-                    }
-                ],
-            }
-        )
-
-    zattrs = {
-        "multiscales": [
-            {
-                "version": version,
-                "name": name,
-                "axes": [
-                    {"name": "t", "type": "time"},
-                    {"name": "c", "type": "channel"},
-                    {"name": "z", "type": "space", "unit": unit},
-                    {"name": "y", "type": "space", "unit": unit},
-                    {"name": "x", "type": "space", "unit": unit},
-                ],
-                "datasets": datasets,
-            }
-        ]
-    }
-
-    # Optional OMERO block (Fiji likes having dtype + omero info sometimes)
-    if write_omero:
-        # Minimal channel list
-        zattrs["omero"] = {
-            "channels": [{"label": lbl, "active": True} for lbl in channel_labels],
-            # You can optionally add rdefs, windows, colors, etc. but not required
-        }
-
-    (store / ".zattrs").write_text(json.dumps(zattrs, indent=2))
 
 class ZarrWriter(BaseWriter):
     """
@@ -174,7 +59,7 @@ class ZarrWriter(BaseWriter):
         self._chunk_size_y_px = None
         self._chunk_size_z_px = None
         self._version = None
-        self._multiscale = None
+        self._multiscale = False
         self._shuffle = 0
         self._clevel = 1
         self.nilluminations=1
@@ -830,149 +715,270 @@ class ZarrWriter(BaseWriter):
         log_handler.setFormatter(log_formatter)
         logger.addHandler(log_handler)
         filepath = Path(self._path, self._acquisition_name, self._filename).absolute()
-        store_level0 = filepath / "0"
-        os.makedirs(store_level0, exist_ok=True)
-        ensure_zarr_v2_root_group(str(filepath))
-        print('CLEVEL ', self._clevel)
 
         print(self._compression, aqz.Compressor.BLOSC1, self._clevel, self._shuffle)
-        # compression_settings = aqz.CompressionSettings(
-        #     codec=self._compression,  # compression codec
-        #     compressor=aqz.Compressor.BLOSC1,  # compressor
-        #     clevel=self._clevel,  # compression level
-        #     shuffle=self._shuffle,  # shuffle filter
-        # )
-        # Determine compressor based on codec
-        if self._compression == aqz.CompressionCodec.NONE:
-            current_compressor = aqz.Compressor.NONE
-        else:
-            current_compressor = aqz.Compressor.BLOSC1
+        try:
+            # Newer acquire_zarr uses `level`.
+            compression_settings = aqz.CompressionSettings(
+                codec=self._compression,  # compression codec
+                compressor=aqz.Compressor.BLOSC1,  # compressor
+                level=self._clevel,  # compression level
+                shuffle=self._shuffle,  # shuffle filter
+            )
+        except TypeError:
+            # Older acquire_zarr uses `clevel`.
+            compression_settings = aqz.CompressionSettings(
+                codec=self._compression,  # compression codec
+                compressor=aqz.Compressor.BLOSC1,  # compressor
+                clevel=self._clevel,  # compression level
+                shuffle=self._shuffle,  # shuffle filter
+            )
 
-        compression_settings = aqz.CompressionSettings(
-            codec=self._compression,  # compression codec
-            compressor=current_compressor,  # DYNAMICALLY SET
-            clevel=self._clevel,  # compression level
-            shuffle=self._shuffle,  # shuffle filter
-        )
-        
-        settings = aqz.StreamSettings(
-            store_path=str(store_level0),
-            data_type=DATA_TYPES[self._data_type],
-            version=VERSIONS[self._version],
-            multiscale=self._multiscale,
-            compression=compression_settings, # ITS COMMENTED OUT HERE <<<
-        )
-        
-        settings.dimensions.extend(
-            [
-                aqz.Dimension(
-                    name="t",
-                    type=aqz.DimensionType.TIME,
-                    array_size_px=1,
-                    chunk_size_px=1,
-                    shard_size_chunks=1,
-                ),
-                aqz.Dimension(
-                    name="c",
-                    type=aqz.DimensionType.CHANNEL,
-                    array_size_px=1,
-                    chunk_size_px=1,
-                    shard_size_chunks=1,
-                ),
-                aqz.Dimension(
-                    name="z",
-                    type=aqz.DimensionType.SPACE,
-                    array_size_px=self.frame_count_px,
-                    chunk_size_px=self._chunk_size_z_px,
-                    shard_size_chunks=1,  # hardcode shard to 1 in z
-                ),
-                aqz.Dimension(
-                    name="y",
-                    type=aqz.DimensionType.SPACE,
-                    array_size_px=self.row_count_px,
-                    chunk_size_px=self._chunk_size_y_px,
-                    shard_size_chunks=ceil(self.row_count_px / self._chunk_size_y_px),
-                ),
-                aqz.Dimension(
-                    name="x",
-                    type=aqz.DimensionType.SPACE,
-                    array_size_px=self.column_count_px,
-                    chunk_size_px=self._chunk_size_x_px,
-                    shard_size_chunks=ceil(self.column_count_px / self._chunk_size_x_px),
-                ),
+        def _make_dimension(name: str, dim_kind, array_size_px: int, chunk_size_px: int, shard_size_chunks: int):
+            kwargs = {
+                "name": name,
+                "array_size_px": array_size_px,
+                "chunk_size_px": chunk_size_px,
+                "shard_size_chunks": shard_size_chunks,
+            }
+            # API changed between acquire_zarr versions ("kind" vs "type").
+            try:
+                return aqz.Dimension(kind=dim_kind, **kwargs)
+            except TypeError:
+                return aqz.Dimension(type=dim_kind, **kwargs)
+
+        def _fix_multiscales_metadata() -> None:
+            attrs_path = Path(filepath, "0", ".zattrs")
+            if not attrs_path.exists():
+                return
+            try:
+                with open(attrs_path, "r", encoding="utf-8") as f:
+                    attrs = json.load(f)
+            except Exception:
+                return
+
+            multiscales = attrs.get("multiscales")
+            if not isinstance(multiscales, list) or not multiscales:
+                return
+
+            ms0 = multiscales[0]
+            if not isinstance(ms0, dict):
+                return
+
+            # Enforce OME-NGFF TCZYX axis semantics.
+            ms0["axes"] = [
+                {"name": "t", "type": "time"},
+                {"name": "c", "type": "channel"},
+                {"name": "z", "type": "space", "unit": "micrometer"},
+                {"name": "y", "type": "space", "unit": "micrometer"},
+                {"name": "x", "type": "space", "unit": "micrometer"},
             ]
+
+            datasets = ms0.get("datasets")
+            if isinstance(datasets, list) and datasets:
+                def _dataset_shape(path_text: str):
+                    zarray_path = Path(filepath, "0", path_text, ".zarray")
+                    if not zarray_path.exists():
+                        return None
+                    try:
+                        with open(zarray_path, "r", encoding="utf-8") as f:
+                            arr_meta = json.load(f)
+                        shape = arr_meta.get("shape")
+                        if isinstance(shape, list) and len(shape) == 5:
+                            return shape
+                    except Exception:
+                        return None
+                    return None
+
+                first_path = datasets[0].get("path", "0") if isinstance(datasets[0], dict) else "0"
+                full_shape = _dataset_shape(first_path)
+                if full_shape is not None:
+                    for ds in datasets:
+                        if not isinstance(ds, dict):
+                            continue
+                        lvl_shape = _dataset_shape(ds.get("path", "0"))
+                        if lvl_shape is None:
+                            continue
+                        # Keep T/C fixed, scale Z/Y/X by ratio to level 0.
+                        scale = [1.0, 1.0]
+                        for idx in (2, 3, 4):
+                            denom = max(1, lvl_shape[idx])
+                            scale.append(float(full_shape[idx]) / float(denom))
+                        ds["coordinateTransformations"] = [{"type": "scale", "scale": scale}]
+
+            try:
+                with open(attrs_path, "w", encoding="utf-8") as f:
+                    json.dump(attrs, f, ensure_ascii=True)
+            except Exception:
+                return
+
+        dimensions = [
+            _make_dimension("t", aqz.DimensionType.TIME, 1, 1, 1),
+            _make_dimension("c", aqz.DimensionType.CHANNEL, 1, 1, 1),
+            _make_dimension("z", aqz.DimensionType.SPACE, self.frame_count_px, CHUNK_COUNT_PX, 1),
+            _make_dimension(
+                "y",
+                aqz.DimensionType.SPACE,
+                self.row_count_px,
+                self._chunk_size_y_px,
+                ceil(self.row_count_px / self._chunk_size_y_px),
+            ),
+            _make_dimension(
+                "x",
+                aqz.DimensionType.SPACE,
+                self.column_count_px,
+                self._chunk_size_x_px,
+                ceil(self.column_count_px / self._chunk_size_x_px),
+            ),
+        ]
+
+        # acquire_zarr has multiple StreamSettings APIs across versions.
+        # Old API: StreamSettings(data_type=..., multiscale=..., compression=...) + settings.dimensions
+        # New API: StreamSettings(arrays=[ArraySettings(...)], ...)
+        stream_api_mode = "legacy"
+        try:
+            settings = aqz.StreamSettings(
+                store_path=str(filepath),
+                data_type=DATA_TYPES[self._data_type],
+                version=VERSIONS[self._version],
+                multiscale=self._multiscale,
+                compression=compression_settings,
+            )
+            settings.dimensions.extend(dimensions)
+            dim_names = [getattr(dim, "name", "") for dim in settings.dimensions]
+        except TypeError as stream_settings_exc:
+            stream_api_mode = "arrays"
+            if not hasattr(aqz, "ArraySettings"):
+                raise
+
+            array_kwargs = {
+                "output_key": "0",
+                "data_type": DATA_TYPES[self._data_type],
+                "dimensions": dimensions,
+                "compression": compression_settings,
+            }
+            if self._multiscale and hasattr(aqz, "DownsamplingMethod"):
+                downsample_mean = getattr(aqz.DownsamplingMethod, "MEAN", None)
+                if downsample_mean is not None:
+                    array_kwargs["downsampling_method"] = downsample_mean
+
+            try:
+                array_settings = aqz.ArraySettings(**array_kwargs)
+            except TypeError:
+                # Fallback for pybind variants that expose a default ctor + settable attrs.
+                array_settings = aqz.ArraySettings()
+                for k, v in array_kwargs.items():
+                    try:
+                        setattr(array_settings, k, v)
+                    except Exception:
+                        pass
+
+            stream_kwargs = {
+                "store_path": str(filepath),
+                "version": VERSIONS[self._version],
+                "overwrite": True,
+                "arrays": [array_settings],
+            }
+            try:
+                settings = aqz.StreamSettings(**stream_kwargs)
+            except TypeError:
+                # Some versions do not expose overwrite.
+                stream_kwargs.pop("overwrite", None)
+                settings = aqz.StreamSettings(**stream_kwargs)
+
+            dim_names = [getattr(dim, "name", "") for dim in dimensions]
+            shared_log_queue.put(
+                f"{self._filename}: using StreamSettings(arrays=...) API due to: {stream_settings_exc!r}"
+            )
+        # Shared-memory frames are (scan, row, col), mapped to (z, y, x).
+        spatial_axis_map = {"z": 0, "y": 1, "x": 2}
+
+        append_include_nonspatial_dims = str(
+            os.getenv("VOXEL_ZARR_APPEND_INCLUDE_NONSPATIAL", "0")
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        shared_log_queue.put(
+            f"{self._filename}: append_include_nonspatial_dims={append_include_nonspatial_dims}"
         )
+
+        def _reshape_frames_for_stream(frames_zyx: np.ndarray, include_nonspatial_dims: bool) -> np.ndarray:
+            """
+            Adapt shared-memory chunk payload (Z,Y,X) to the stream dimension order.
+            Non-spatial dimensions are written as singleton axes.
+            """
+            if frames_zyx.ndim != 3:
+                return frames_zyx
+            if not all(axis in dim_names for axis in ("z", "y", "x")):
+                return frames_zyx
+
+            # Reorder spatial axes to match the order used in settings.dimensions.
+            target_spatial_order = [axis for axis in dim_names if axis in spatial_axis_map]
+            permute = [spatial_axis_map[axis] for axis in target_spatial_order]
+            out = frames_zyx.transpose(permute)
+
+            # Optionally insert singleton axes for non-spatial dimensions (t/c).
+            if include_nonspatial_dims:
+                for axis_index, axis_name in enumerate(dim_names):
+                    if axis_name not in spatial_axis_map:
+                        out = np.expand_dims(out, axis=axis_index)
+            return np.ascontiguousarray(out)
 
         stream = aqz.ZarrStream(settings)
 
-        chunk_total = ceil(self._frame_count_px / CHUNK_COUNT_PX)
-        for chunk_num in range(chunk_total):
-            # Wait for new data.
-            while self.done_reading.is_set():
-                sleep(0.001)
-            # Attach a reference to the data from shared memory.
-            shm = SharedMemory(self.shm_name, create=False, size=shm_nbytes)
-            frames = np.ndarray(shm_shape, self._data_type, buffer=shm.buf)
-            shared_log_queue.put(
-                f"{self._filename}: writing chunk " f"{chunk_num + 1}/{chunk_total} of size {frames.shape}."
-            )
-            start_time = perf_counter()
-            # Put the frames into the stream
-            frames_5d = frames[None, None, ...]
-            stream.append(frames)
-            frames = None
-            shared_log_queue.put(f"{self._filename}: writing chunk took " f"{perf_counter() - start_time:.2f} [s]")
-            shm.close()
-            self.done_reading.set()
-            # update shared value progress range 0-1
-            shared_progress.value = (chunk_num + 1) / chunk_total
+        try:
+            chunk_total = ceil(self._frame_count_px / CHUNK_COUNT_PX)
+            for chunk_num in range(chunk_total):
+                # Wait for new data.
+                while self.done_reading.is_set():
+                    sleep(0.001)
+                # Attach a reference to the data from shared memory.
+                shm = SharedMemory(self.shm_name, create=False, size=shm_nbytes)
+                frames = np.ndarray(shm_shape, self._data_type, buffer=shm.buf)
+                shared_log_queue.put(
+                    f"{self._filename}: writing chunk " f"{chunk_num + 1}/{chunk_total} of size {frames.shape}."
+                )
+                start_time = perf_counter()
+                # Detach from shared memory before append. If append is buffered/asynchronous,
+                # a shared-memory view can be invalidated by the producer/consumer handshake.
+                frames_to_write = np.array(
+                    _reshape_frames_for_stream(
+                        frames, include_nonspatial_dims=append_include_nonspatial_dims
+                    ),
+                    copy=True,
+                    order="C",
+                )
+                try:
+                    stream.append(frames_to_write)
+                except Exception as exc:
+                    if append_include_nonspatial_dims:
+                        raise
+                    # Compatibility fallback for acquire_zarr versions that require singleton t/c axes.
+                    shared_log_queue.put(
+                        f"{self._filename}: append fallback with non-spatial dims due to: {exc!r}"
+                    )
+                    frames_to_write_fallback = np.array(
+                        _reshape_frames_for_stream(frames, include_nonspatial_dims=True),
+                        copy=True,
+                        order="C",
+                    )
+                    stream.append(frames_to_write_fallback)
+                frames = None
+                shared_log_queue.put(f"{self._filename}: writing chunk took " f"{perf_counter() - start_time:.2f} [s]")
+                shm.close()
+                self.done_reading.set()
+                # update shared value progress range 0-1
+                shared_progress.value = (chunk_num + 1) / chunk_total
 
-            shared_log_queue.put(f"{self._filename}: {self._progress.value * 100:.2f} [%] complete.")
+                shared_log_queue.put(f"{self._filename}: {self._progress.value * 100:.2f} [%] complete.")
+        finally:
+            # Flush and finalize trailing shard/chunk writes.
+            close_stream = getattr(stream, "close", None)
+            if callable(close_stream):
+                try:
+                    close_stream()
+                    _fix_multiscales_metadata()
+                except Exception as exc:
+                    shared_log_queue.put(f"{self._filename}: warning: stream.close() failed: {exc!r}")
 
         # check and empty queue to avoid code hanging in process
-        if not shared_log_queue.empty:
+        if not shared_log_queue.empty():
             shared_log_queue.get_nowait()
-    
-    def finalize(self):
-        """
-        Call after acquisition completes (or in a finally block).
-        Ensures writer process ended and writes NGFF metadata + BDV XML.
-        """
-        filepath = Path(self._path, self._acquisition_name, self._filename).absolute()
-
-        # ensure process finished
-        # if getattr(self, "_process", None) is not None:
-        #     if self._process.is_alive():
-        #         self._process.join(timeout=30)
-        #     if self._process.is_alive():
-        #         raise RuntimeError("Writer process did not terminate in finalize().")
-
-        # voxel sizes (your stored array is effectively Z,Y,X in space; we publish TCZYX)
-        dz = float(self._z_voxel_size_um)
-        dy = float(self._y_voxel_size_um * np.cos(self.theta_deg * np.pi / 180.0))
-        dx = float(self._x_voxel_size_um)
-
-        # Channel labels: if each store is per-channel, keep single label
-        ch_label = f"ch{getattr(self, '_channel', 0)}"
-
-        # Write OME-NGFF root .zattrs with TCZYX axes
-        view_root = filepath/"0"
-        try:
-            write_ngff_zattrs_tczyx(
-                str(view_root),
-                dz_um=dz,
-                dy_um=dy,
-                dx_um=dx,
-                channel_labels=[ch_label],
-                datasets_paths=None,  # optional explicit; otherwise auto-detect
-            )
-        except Exception as e:
-            self.log.exception("Failed to write NGFF .zattrs: %s", e)
-
-        # Your BDV XML (for BigStitcher) — keep if you need it
-        try:
-            self.write_xml()
-        except Exception as e:
-            self.log.exception("Failed to write BDV XML: %s", e)
-
-
