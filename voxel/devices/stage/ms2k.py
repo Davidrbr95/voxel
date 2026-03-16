@@ -771,8 +771,32 @@ class MS2000(SerialPort):
         # cmd = f"E Z=0.200"
         # self.send_command(cmd)
         reply = self.read_response()
+
+    def set_z_e(self) -> None:
+        cmd = f"E Z=0.010"
+        self.send_command(cmd)
+        # cmd = f"E Z=0.200"
+        # self.send_command(cmd)
+        reply = self.read_response()
     
     def set_default_z_motion_asi_parameters(self) -> None:
         cmd = f"B Z=0 F=0"
+        self.send_command(cmd)
+        reply = self.read_response()
+    
+    def change_value(self):
+        # cmd = f"AA X=75"
+        # self.send_command(cmd)
+        # reply = self.read_response()
+        # cmd = f"AZ X"
+        # self.send_command(cmd)
+        # reply = self.read_response()
+        cmd = f"KD X=0"
+        self.send_command(cmd)
+        reply = self.read_response()
+        cmd = f"KI X=15"
+        self.send_command(cmd)
+        reply = self.read_response()
+        cmd = f"KP X=0"
         self.send_command(cmd)
         reply = self.read_response()

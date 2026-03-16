@@ -309,7 +309,13 @@ class Stage(BaseStage):
 
     def set_z_pc(self):
         self.ms2000.set_z_pc()
-    
+
+    def set_z_e(self):
+        self.ms2000.set_z_e()
+
+    def change_value(self):
+        self.ms2000.change_value()
+
     def set_smooth_z_motion_asi_parameters(self):
         self.ms2000.set_smooth_z_motion_asi_parameters()
     
