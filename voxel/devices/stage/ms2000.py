@@ -188,16 +188,41 @@ class Stage(BaseStage):
     def close(self):
         self.ms2000.disconnect_from_serial()
 
+    # @property
+    # def position_mm(self):
+
+    #     if self.scanflag:
+    #         # print('SCAN FLAG TRUE')
+    #         ms2000_position_um = 0
+    #         return self._hardware_to_instrument({self.hardware_axis: ms2000_position_um/1000}).get(self.instrument_axis, None)
+    #     ms2000_position_um = self.ms2000.get_position_um(self.hardware_axis)
+    #     # print('PROPERTY WORKER ms2000', ms2000_position_um)
+    #     return self._hardware_to_instrument({self.hardware_axis: ms2000_position_um/1000}).get(self.instrument_axis, None)
+
     @property
     def position_mm(self):
-
         if self.scanflag:
-            # print('SCAN FLAG TRUE')
             ms2000_position_um = 0
-            return self._hardware_to_instrument({self.hardware_axis: ms2000_position_um/1000}).get(self.instrument_axis, None)
-        ms2000_position_um = self.ms2000.get_position_um(self.hardware_axis)
-        # print('PROPERTY WORKER ms2000', ms2000_position_um)
-        return self._hardware_to_instrument({self.hardware_axis: ms2000_position_um/1000}).get(self.instrument_axis, None)
+            pos_mm = self._hardware_to_instrument(
+                {self.hardware_axis: ms2000_position_um / 1000}
+            ).get(self.instrument_axis, None)
+            self._last_position_mm = pos_mm
+            return pos_mm
+
+        try:
+            ms2000_position_um = self.ms2000.get_position_um(self.hardware_axis)
+            pos_mm = self._hardware_to_instrument(
+                {self.hardware_axis: ms2000_position_um / 1000}
+            ).get(self.instrument_axis, None)
+            self._last_position_mm = pos_mm
+            return pos_mm
+
+        except (IndexError, ValueError) as e:
+            self.log.warning(
+                f"Bad MS2000 position reply for axis {self.hardware_axis}; "
+                f"using last good position. Error: {e}"
+            )
+            return self._last_position_mm
 
     @position_mm.setter
     def position_mm(self, value):

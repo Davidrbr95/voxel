@@ -195,7 +195,6 @@ class SkyraLaser(BaseLaser):
 
     @property
     def max_power(self):
-        print('AT MAX POWER property')
         if self._inst.constant_current == 'ON':
             return int((round(self._coefficients_curve().subs(symbols('x'), 100), 1)))
         else:
