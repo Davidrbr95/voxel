@@ -77,6 +77,7 @@ class Profiler(BaseCamera):
         print('INITIALIZING')
         self.log.info("INITIALIZNG PROFILER")
         self.camera_ready_event = None
+        self.scan_data_ready_event = None
         # self.close()
         # self.prepare()
         
@@ -250,16 +251,15 @@ class Profiler(BaseCamera):
 
     @no_lock
     def get_z_val_array(self):
-        z_val_mm = [0.0] * len(self.z_val)
-        ZUnit = self.get_z_unit()
-        for i in range(len(self.z_val)):
-            if self.z_val[i] == 0:
-                z_val_mm[i] = np.nan
-            else:
-                z_val_mm[i] = int(self.z_val[i]) - 32768
-                z_val_mm[i] *= ZUnit / 100.0
-                z_val_mm[i] /= 1000.0
-        z_val_arr = np.array(z_val_mm).reshape((self.total_lines, self.profinfo.wProfileDataCount))
+        # Vectorized conversion of packed profiler heights to mm.
+        z_raw = np.asarray(self.z_val, dtype=np.int32)
+        z_unit = float(self.get_z_unit())
+        scale = (z_unit / 100.0) / 1000.0
+
+        z_mm = (z_raw.astype(np.float64) - 32768.0) * scale
+        z_mm[z_raw == 0] = np.nan
+
+        z_val_arr = z_mm.reshape((self.total_lines, self.profinfo.wProfileDataCount))
         return np.around(z_val_arr, decimals=4)
         
     @property
@@ -271,6 +271,11 @@ class Profiler(BaseCamera):
     def start_thread(self):
         
         self.image_available = False
+        if self.scan_data_ready_event is not None:
+            try:
+                self.scan_data_ready_event.clear()
+            except Exception:
+                pass
         if self.run_first:
             self.highspeed_com_setup(self.total_lines)
 
@@ -299,16 +304,22 @@ class Profiler(BaseCamera):
         # LJXAwrap.LJX8IF_StartMeasure(self.device_id)
         self.log.info(f"PK - 1")
     
+        _wait_start = time.perf_counter()
         while not self.image_available:
             self.log.info(f"image available {self.image_available}")
             time.sleep(1)
+        print(f"[KeyenceTiming] start_thread image_available=True after {time.perf_counter() - _wait_start:.3f}s")
 
         # if self.image_available:
         #     self.log.info(f"I AM TRUE ALWAYS")
         
         if True:#self.close_flag:
             self.log.info("before the close in threads")
+            _close_start = time.perf_counter()
+            print("[KeyenceTiming] start_thread calling close()")
             self.close()
+            print(f"[KeyenceTiming] start_thread close() returned in {time.perf_counter() - _close_start:.3f}s")
+            print("[KeyenceTiming] start_thread exiting")
 
     # def stop_communication(self):
     #     LJXAwrap.LJX8IF_StopHighSpeedDataCommunication(self.device_id)
@@ -327,22 +338,43 @@ class Profiler(BaseCamera):
 
     @no_lock
     def getFrame_alloc(self):
+        _getframe_start = time.perf_counter()
         print('IN GET FRAME FUNCTION')
         self.log.info(f"Get frame function profiler")
+        _wait_start = time.perf_counter()
+        _wait_loops = 0
         while not self.image_available:
             self.log.info(f"image_available{self.image_available}")
             # print(self.image_available)
             time.sleep(0.05)
+            _wait_loops += 1
+        print(f"[KeyenceTiming] getFrame_alloc wait_for_image_available={time.perf_counter() - _wait_start:.3f}s loops={_wait_loops}")
+        if self.scan_data_ready_event is not None:
+            try:
+                self.scan_data_ready_event.set()
+                print("[KeyenceTiming] getFrame_alloc signaled scan_data_ready_event=True")
+            except Exception as exc:
+                print(f"[KeyenceTiming] getFrame_alloc failed to set scan_data_ready_event: {exc}")
         
+        _t0 = time.perf_counter()
         z_arr = self.get_z_val_array()
+        _z_elapsed = time.perf_counter() - _t0
+        print(f"[KeyenceTiming] getFrame_alloc get_z_val_array={_z_elapsed:.3f}s shape={z_arr.shape}")
+
+        _t0 = time.perf_counter()
         lumi_arr = np.array(self.lumi_val).reshape((self.total_lines, self.profinfo.wProfileDataCount))
+        _lumi_elapsed = time.perf_counter() - _t0
+        print(f"[KeyenceTiming] getFrame_alloc lumi_reshape={_lumi_elapsed:.3f}s shape={lumi_arr.shape}")
 
         # z_arr, lumi_arr = self.wait_and_process_tile(self.tile_buffers[0], self.profile_data_count)
         # print("This is z_arr", z_arr)
         # print("This is lumi_arr", lumi_arr)
         # print("Shape of z_arr:", z_arr.shape)
         # print("Shape of lumi_arr:", lumi_arr.shape)
+        _t0 = time.perf_counter()
         combined_arr = np.stack((z_arr, lumi_arr), axis=0)
+        _stack_elapsed = time.perf_counter() - _t0
+        print(f"[KeyenceTiming] getFrame_alloc stack_arrays={_stack_elapsed:.3f}s shape={combined_arr.shape}")
         # self.z_data.append(z_arr)
         # self.lumi_data.append(lumi_arr)
         # LJXAwrap.LJX8IF_CALLBACK_SIMPLE_ARRAY(self.callback)
@@ -354,13 +386,21 @@ class Profiler(BaseCamera):
         # print(f"returning data  ")
         # self.keyence_producer_thread.join()
 
+        print("[KeyenceTiming] getFrame_alloc calling thread_join()")
         self.thread_join()
+        print(f"[KeyenceTiming] getFrame_alloc total={time.perf_counter() - _getframe_start:.3f}s")
         return combined_arr, self.total_lines
 
     @no_lock
     def thread_join(self):
-        print("In keyence, thread has been joined!!")
+        thread_alive_before = self.keyence_producer_thread.is_alive() if hasattr(self, "keyence_producer_thread") else False
+        print(f"[KeyenceTiming] thread_join before join alive={thread_alive_before}")
+        _t0 = time.perf_counter()
         self.keyence_producer_thread.join()
+        join_elapsed = time.perf_counter() - _t0
+        thread_alive_after = self.keyence_producer_thread.is_alive() if hasattr(self, "keyence_producer_thread") else False
+        print(f"[KeyenceTiming] thread_join after join elapsed={join_elapsed:.3f}s alive={thread_alive_after}")
+        print("In keyence, thread has been joined!!")
 
 
     @no_lock
@@ -409,18 +449,28 @@ class Profiler(BaseCamera):
         # self.stop()
         # paired with preinitalization
         self.log.info("Running close")
+        _close_start = time.perf_counter()
         print('H1x')
+        _t0 = time.perf_counter()
         LJXAwrap.LJX8IF_StopMeasure(self.device_id)
+        print(f"[KeyenceTiming] close StopMeasure={time.perf_counter() - _t0:.3f}s")
         print('H2x')
+        _t0 = time.perf_counter()
         res = LJXAwrap.LJX8IF_StopHighSpeedDataCommunication(self.device_id)
+        print(f"[KeyenceTiming] close StopHighSpeedDataCommunication={time.perf_counter() - _t0:.3f}s")
         print("LJXAwrap.LJX8IF_StoptHighSpeedDataCommunication:", hex(res))
+        _t0 = time.perf_counter()
         self.laser_off()
+        print(f"[KeyenceTiming] close laser_off={time.perf_counter() - _t0:.3f}s")
         print('H3x')
+        _t0 = time.perf_counter()
         res = LJXAwrap.LJX8IF_FinalizeHighSpeedDataCommunication(self.device_id)
+        print(f"[KeyenceTiming] close FinalizeHighSpeedDataCommunication={time.perf_counter() - _t0:.3f}s")
         print("LJXAwrap.LJX8IF_FinalizeHighSpeedDataCommunication:", hex(res))
         print('H4x')
         # LJXAwrap.LJX8IF_CommunicationClose(self.device_id)
         print('H5x')
+        print(f"[KeyenceTiming] close total={time.perf_counter() - _close_start:.3f}s")
         # print("----")
         # print("Ethernet connection closed for device", self.device_id)
         return
@@ -432,13 +482,17 @@ class Profiler(BaseCamera):
 
     @no_lock
     def laser_on(self):
+        _t0 = time.perf_counter()
         LJXAwrap.LJX8IF_ControlLaser(self.device_id, 1)
+        print(f"[KeyenceTiming] laser_on={time.perf_counter() - _t0:.3f}s")
         print("Turning on laser for device", self.device_id)
         return
     
     @no_lock
     def laser_off(self):
+        _t0 = time.perf_counter()
         LJXAwrap.LJX8IF_ControlLaser(self.device_id, 0)
+        print(f"[KeyenceTiming] laser_off={time.perf_counter() - _t0:.3f}s")
         print("Turning off laser for device", self.device_id)
         return
     
