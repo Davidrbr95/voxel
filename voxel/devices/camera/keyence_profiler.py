@@ -78,6 +78,32 @@ class Profiler(BaseCamera):
         self.log.info("INITIALIZNG PROFILER")
         self.camera_ready_event = None
         self.scan_data_ready_event = None
+        self._fixed_total_lines = 8800
+        self._raw_buffer_shape = None
+        self._raw_z_np = None
+        self._raw_lumi_np = None
+        self._raw_z_flat = None
+        self._raw_lumi_flat = None
+        self._profile_width = 3200
+        self.total_lines = 0
+        self.total_lines_acquired = 0
+        self.profile_data_count = 0
+        self.image_available = False
+        self.z_val = []
+        self.lumi_val = []
+        self._batch_measurement_cached = None
+        self._batch_count_cached = None
+        self._perf_counters = {
+            "buffer_alloc_count": 0,
+            "buffer_reuse_count": 0,
+            "batch_measurement_apply_count": 0,
+            "batch_measurement_skip_count": 0,
+            "batch_count_apply_count": 0,
+            "batch_count_skip_count": 0,
+            "callback_copy_count": 0,
+        }
+        self._callback_copy_total_s = 0.0
+        self._callback_copy_max_s = 0.0
         # self.close()
         # self.prepare()
         
@@ -97,6 +123,40 @@ class Profiler(BaseCamera):
     @no_lock
     def prepare(self):
         pass
+
+    @no_lock
+    def _ensure_raw_buffers(self, total_lines, width_px):
+        total_lines = int(total_lines)
+        width_px = int(width_px)
+        if total_lines <= 0 or width_px <= 0:
+            raise ValueError(f"Invalid raw buffer shape requested: ({total_lines}, {width_px})")
+
+        target_shape = (total_lines, width_px)
+        _t0 = time.perf_counter()
+        if self._raw_buffer_shape != target_shape or self._raw_z_np is None or self._raw_lumi_np is None:
+            self._raw_z_np = np.empty(target_shape, dtype=np.int32)
+            self._raw_lumi_np = np.empty(target_shape, dtype=np.uint16)
+            self._raw_z_flat = self._raw_z_np.reshape(-1)
+            self._raw_lumi_flat = self._raw_lumi_np.reshape(-1)
+            self._raw_buffer_shape = target_shape
+            self._perf_counters["buffer_alloc_count"] += 1
+            action = "allocated"
+        else:
+            self._perf_counters["buffer_reuse_count"] += 1
+            action = "reused"
+
+        # Keep compatibility with existing helper methods.
+        self.z_val = self._raw_z_flat
+        self.lumi_val = self._raw_lumi_flat
+
+        mode = "fixed_8800" if total_lines == self._fixed_total_lines else "dynamic"
+        print(
+            "[KeyenceTiming] highspeed_com_setup buffer_"
+            f"{action} mode={mode} shape={target_shape} "
+            f"elapsed_s={time.perf_counter() - _t0:.3f} "
+            f"alloc_count={self._perf_counters['buffer_alloc_count']} "
+            f"reuse_count={self._perf_counters['buffer_reuse_count']}"
+        )
 
     @no_lock
     def start_highspeed_session(self, total_lines=1000):
@@ -124,32 +184,72 @@ class Profiler(BaseCamera):
         """
         Prepare the camera for acquisition.
         """
+        _setup_start = time.perf_counter()
         self.log.info("highspeed_com_setup")
         total_lines = int(total_lines)
-        ###
+
+        _t0 = time.perf_counter()
         print('P1')
         self.z_data = []      # Processed Z data per tile
         self.lumi_data = []   # Processed luminance data per tile
         self.profinfo = None
         self.start_x = 0
         self.start_y = 0
-        self.tile_buffers = []      # List of dictionaries for each tile’s raw data
+        self.tile_buffers = []      # List of dictionaries for each tile's raw data
         self.current_tile_index = 0  # Global pointer for the callback
-        self.total_lines = total_lines 
+        self.total_lines = total_lines
         self.profile_data_count = 0
         self.image_available = False
-        self.z_val = [0] * 3200 * self.total_lines
-        self.lumi_val = [0] * 3200 * self.total_lines
+        self.total_lines_acquired = 0
+        self._profile_width = 3200
+        print(f"[KeyenceTiming] highspeed_com_setup state_reset={time.perf_counter() - _t0:.3f}s")
+
+        _t0 = time.perf_counter()
+        self._ensure_raw_buffers(self.total_lines, self._profile_width)
+        print(f"[KeyenceTiming] highspeed_com_setup buffer_ready={time.perf_counter() - _t0:.3f}s")
         print('P2')
-        ###
-        
+
+        _t0 = time.perf_counter()
         self.laser_on()
+        print(f"[KeyenceTiming] highspeed_com_setup laser_on={time.perf_counter() - _t0:.3f}s")
         print('P4')
-        if self._get_setting(category=0x00, item=0x03)[0] != 1:
+
+        _t0 = time.perf_counter()
+        if self._batch_measurement_cached is None:
+            self._batch_measurement_cached = int(self._get_setting(category=0x00, item=0x03)[0])
+        if self._batch_measurement_cached != 1:
             print('Check that batch measurment set')
             self._change_batch_measurement(1)
-        self._change_batch_count(bc_value=self._decimal_to_hex_split(self.total_lines))
-        
+            self._batch_measurement_cached = 1
+            self._perf_counters["batch_measurement_apply_count"] += 1
+            batch_measure_action = "applied"
+        else:
+            self._perf_counters["batch_measurement_skip_count"] += 1
+            batch_measure_action = "skipped"
+        print(
+            "[KeyenceTiming] highspeed_com_setup batch_measurement "
+            f"{batch_measure_action} elapsed_s={time.perf_counter() - _t0:.3f} "
+            f"apply_count={self._perf_counters['batch_measurement_apply_count']} "
+            f"skip_count={self._perf_counters['batch_measurement_skip_count']}"
+        )
+
+        _t0 = time.perf_counter()
+        if self._batch_count_cached != self.total_lines:
+            self._change_batch_count(bc_value=self._decimal_to_hex_split(self.total_lines))
+            self._batch_count_cached = self.total_lines
+            self._perf_counters["batch_count_apply_count"] += 1
+            batch_count_action = "applied"
+        else:
+            self._perf_counters["batch_count_skip_count"] += 1
+            batch_count_action = "skipped"
+        print(
+            "[KeyenceTiming] highspeed_com_setup batch_count "
+            f"{batch_count_action} lines={self.total_lines} elapsed_s={time.perf_counter() - _t0:.3f} "
+            f"apply_count={self._perf_counters['batch_count_apply_count']} "
+            f"skip_count={self._perf_counters['batch_count_skip_count']}"
+        )
+
+        _t0 = time.perf_counter()
         res = LJXAwrap.LJX8IF_InitializeHighSpeedDataCommunicationSimpleArray(
             self.device_id,
             self.ethernetConfig,
@@ -160,10 +260,11 @@ class Profiler(BaseCamera):
         )
         print('P5')
         print("Initializing high speed communication for device", self.device_id)
+        print(f"[KeyenceTiming] highspeed_com_setup InitializeHighSpeedDataCommunication={time.perf_counter() - _t0:.3f}s")
         if res != 0:
             print("Error initializing - res - prep")
-        
-        # if self.run_first:
+
+        _t0 = time.perf_counter()
         req = LJXAwrap.LJX8IF_HIGH_SPEED_PRE_START_REQ()
         req.bySendPosition = 2
         self.profinfo = LJXAwrap.LJX8IF_PROFILE_INFO()
@@ -173,20 +274,31 @@ class Profiler(BaseCamera):
             req,
             self.profinfo
         )
-        # self.run_first = False
-
 
         print('P6')
         print("Prestarting high speed communication for device", self.device_id)
+        print(f"[KeyenceTiming] highspeed_com_setup PreStartHighSpeedDataCommunication={time.perf_counter() - _t0:.3f}s")
         if res != 0:
             print("Error prestarting")
-        # self.stop()
+
+        if self.profinfo is not None and int(self.profinfo.wProfileDataCount) > 0:
+            self._profile_width = int(self.profinfo.wProfileDataCount)
+            _t0 = time.perf_counter()
+            self._ensure_raw_buffers(self.total_lines, self._profile_width)
+            print(
+                f"[KeyenceTiming] highspeed_com_setup profile_width_reconcile "
+                f"width={self._profile_width} elapsed_s={time.perf_counter() - _t0:.3f}s"
+            )
 
         if hasattr(self, 'camera_ready_event') and self.camera_ready_event is not None:
             print("[Profiler] Network Ready. Signaling Engine to start Stage.")
             self.camera_ready_event.set()
         else:
             print("[Profiler] Warning: camera_ready_event is None. Cannot signal Engine.")
+        print(
+            "[KeyenceTiming] highspeed_com_setup total="
+            f"{time.perf_counter() - _setup_start:.3f}s lines={self.total_lines}"
+        )
         return
 
     def massfunc(self):
@@ -273,14 +385,20 @@ class Profiler(BaseCamera):
     @no_lock
     def get_z_val_array(self):
         # Vectorized conversion of packed profiler heights to mm.
-        z_raw = np.asarray(self.z_val, dtype=np.int32)
+        if isinstance(self._raw_z_flat, np.ndarray):
+            z_raw = self._raw_z_flat
+        else:
+            z_raw = np.asarray(self.z_val, dtype=np.int32)
+        if z_raw.dtype != np.int32:
+            z_raw = z_raw.astype(np.int32, copy=False)
         z_unit = float(self.get_z_unit())
         scale = (z_unit / 100.0) / 1000.0
 
         z_mm = (z_raw.astype(np.float64) - 32768.0) * scale
         z_mm[z_raw == 0] = np.nan
 
-        z_val_arr = z_mm.reshape((self.total_lines, self.profinfo.wProfileDataCount))
+        profile_width = int(self.profile_data_count) if int(self.profile_data_count) > 0 else int(self._profile_width)
+        z_val_arr = z_mm.reshape((self.total_lines, profile_width))
         return np.around(z_val_arr, decimals=4)
         
     @property
@@ -369,7 +487,11 @@ class Profiler(BaseCamera):
         print(f"[KeyenceTiming] getFrame_alloc get_z_val_array={_z_elapsed:.3f}s shape={z_arr.shape}")
 
         _t0 = time.perf_counter()
-        lumi_arr = np.array(self.lumi_val).reshape((self.total_lines, self.profinfo.wProfileDataCount))
+        profile_width = int(self.profile_data_count) if int(self.profile_data_count) > 0 else int(self._profile_width)
+        if isinstance(self._raw_lumi_flat, np.ndarray):
+            lumi_arr = self._raw_lumi_flat.reshape((self.total_lines, profile_width))
+        else:
+            lumi_arr = np.asarray(self.lumi_val).reshape((self.total_lines, profile_width))
         _lumi_elapsed = time.perf_counter() - _t0
         print(f"[KeyenceTiming] getFrame_alloc lumi_reshape={_lumi_elapsed:.3f}s shape={lumi_arr.shape}")
 
@@ -477,6 +599,21 @@ class Profiler(BaseCamera):
         print('H4x')
         # LJXAwrap.LJX8IF_CommunicationClose(self.device_id)
         print('H5x')
+        callback_avg = 0.0
+        if self._perf_counters["callback_copy_count"] > 0:
+            callback_avg = self._callback_copy_total_s / self._perf_counters["callback_copy_count"]
+        print(
+            "[KeyenceTiming] counters "
+            f"buffer_alloc={self._perf_counters['buffer_alloc_count']} "
+            f"buffer_reuse={self._perf_counters['buffer_reuse_count']} "
+            f"batch_measurement_apply={self._perf_counters['batch_measurement_apply_count']} "
+            f"batch_measurement_skip={self._perf_counters['batch_measurement_skip_count']} "
+            f"batch_count_apply={self._perf_counters['batch_count_apply_count']} "
+            f"batch_count_skip={self._perf_counters['batch_count_skip_count']} "
+            f"callback_copy_count={self._perf_counters['callback_copy_count']} "
+            f"callback_copy_avg_s={callback_avg:.6f} "
+            f"callback_copy_max_s={self._callback_copy_max_s:.6f}"
+        )
         print(f"[KeyenceTiming] close total={time.perf_counter() - _close_start:.3f}s")
         # print("----")
         # print("Ethernet connection closed for device", self.device_id)
@@ -645,10 +782,47 @@ class Profiler(BaseCamera):
                 print('C1')
                 if self.image_available is False:
                     print('C2')
-                    for i in range(xpointnum * profnum):
-                        self.z_val[i] = p_height[i]
-                        if luminance_enable == 1:
-                            self.lumi_val[i] = p_lumi[i]
+                    _copy_start = time.perf_counter()
+                    copy_len = int(xpointnum) * int(profnum)
+                    z_copy_len = min(copy_len, len(self.z_val))
+
+                    if isinstance(self._raw_z_flat, np.ndarray):
+                        try:
+                            src_height = np.ctypeslib.as_array(p_height, shape=(z_copy_len,))
+                            np.copyto(self._raw_z_flat[:z_copy_len], src_height, casting="unsafe")
+                            if z_copy_len < self._raw_z_flat.size:
+                                self._raw_z_flat[z_copy_len:] = 0
+                        except Exception:
+                            for i in range(z_copy_len):
+                                self._raw_z_flat[i] = p_height[i]
+                    else:
+                        for i in range(z_copy_len):
+                            self.z_val[i] = p_height[i]
+
+                    if int(luminance_enable) == 1:
+                        lumi_copy_len = min(copy_len, len(self.lumi_val))
+                        if isinstance(self._raw_lumi_flat, np.ndarray):
+                            try:
+                                src_lumi = np.ctypeslib.as_array(p_lumi, shape=(lumi_copy_len,))
+                                np.copyto(self._raw_lumi_flat[:lumi_copy_len], src_lumi, casting="unsafe")
+                                if lumi_copy_len < self._raw_lumi_flat.size:
+                                    self._raw_lumi_flat[lumi_copy_len:] = 0
+                            except Exception:
+                                for i in range(lumi_copy_len):
+                                    self._raw_lumi_flat[i] = p_lumi[i]
+                        else:
+                            for i in range(lumi_copy_len):
+                                self.lumi_val[i] = p_lumi[i]
+
+                    copy_elapsed = time.perf_counter() - _copy_start
+                    self._perf_counters["callback_copy_count"] += 1
+                    self._callback_copy_total_s += copy_elapsed
+                    self._callback_copy_max_s = max(self._callback_copy_max_s, copy_elapsed)
+                    print(
+                        "[KeyenceTiming] callback_copy "
+                        f"copy_len={copy_len} elapsed_s={copy_elapsed:.6f} "
+                        f"count={self._perf_counters['callback_copy_count']}"
+                    )
                     print('C3')
                     self.total_lines_acquired = profnum
                     self.image_available = True

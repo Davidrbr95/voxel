@@ -125,6 +125,25 @@ class Stage(BaseStage):
         # Optionally wait after all moves are completed
         self.ms2000.wait_for_device()
 
+    def move_absolute_xyz_mm(self, x_mm: float, y_mm: float, z_mm: float, wait: bool = True, slow: bool = True):
+        w_text = "" if wait else "NOT "
+        self.log.info(
+            f"Absolute XYZ move to x={x_mm} mm, y={y_mm} mm, z={z_mm} mm and {w_text}waiting."
+        )
+        x_asi = round(float(x_mm) * 10000)
+        y_asi = round(float(y_mm) * 10000)
+        z_asi = round(float(z_mm) * 10000)
+        self.ms2000.move_xyz(x=x_asi, y=y_asi, z=z_asi, slow=slow)
+        if wait:
+            self.ms2000.wait_for_device()
+
+    def redefine_current_xyz_mm(self, x_mm: float, y_mm: float, z_mm: float):
+        self.log.info(f"Redefine current XYZ position using H: x={x_mm} mm, y={y_mm} mm, z={z_mm} mm")
+        x_asi = round(float(x_mm) * 10000)
+        y_asi = round(float(y_mm) * 10000)
+        z_asi = round(float(z_mm) * 10000)
+        return self.ms2000.redefine_position(x=x_asi, y=y_asi, z=z_asi)
+
     def move_absolute_mm(self, position: float, wait: bool = True):
         w_text = "" if wait else "NOT "
         self.log.info(f"Absolute move to: {self.hardware_axis}={position} mm and {w_text}waiting.")

@@ -481,6 +481,32 @@ class MS2000(SerialPort):
         self.send_command_v2(f"MOVE {axis}={distance}")
         self.read_response_slow()
         # time.sleep(0.004)
+
+    def move_xyz(self, x: int, y: int, z: int, slow: bool = False) -> None:
+        """Move X/Y/Z together with one absolute MOVE command."""
+        self.send_command_v2(f"MOVE X={x} Y={y} Z={z}")
+        if slow:
+            self.read_response_slow()
+        else:
+            self.read_response_FAST()
+
+    def redefine_position(self, x: int = None, y: int = None, z: int = None):
+        """Redefine current position using ASI H command (units: 1/10 micron)."""
+        args = []
+        if x is not None:
+            args.append(f"X={int(x)}")
+        if y is not None:
+            args.append(f"Y={int(y)}")
+        if z is not None:
+            args.append(f"Z={int(z)}")
+        if not args:
+            raise ValueError("At least one axis must be provided for H command.")
+
+        cmd = "H " + " ".join(args)
+        self.send_command_v2(cmd)
+        reply = self.read_response_FAST()
+        self.check_reply_for_errors(reply)
+        return reply
  
     def set_max_speed(self, axis: str, speed:int) -> None:
         # traceback.print_stack()
