@@ -97,6 +97,27 @@ class Profiler(BaseCamera):
     @no_lock
     def prepare(self):
         pass
+
+    @no_lock
+    def start_highspeed_session(self, total_lines=1000):
+        _t0_total = time.perf_counter()
+        total_lines = int(total_lines)
+
+        _t0 = time.perf_counter()
+        self.highspeed_com_setup(total_lines=total_lines)
+        print(f"[KeyenceTiming] start_highspeed_session highspeed_com_setup={time.perf_counter() - _t0:.3f}s")
+
+        _t0 = time.perf_counter()
+        self.profile_data_count = self.profinfo.wProfileDataCount
+        res = LJXAwrap.LJX8IF_StartHighSpeedDataCommunication(self.device_id)
+        print("Starting high speed communication for device", self.device_id)
+        print(f"[KeyenceTiming] start_highspeed_session StartHighSpeedDataCommunication={time.perf_counter() - _t0:.3f}s")
+        if res != 0:
+            raise RuntimeError(f"Error starting high speed communication: {hex(res)}")
+        print(
+            "[KeyenceTiming] start_highspeed_session total="
+            f"{time.perf_counter() - _t0_total:.3f}s lines={total_lines}"
+        )
     
     @no_lock
     def highspeed_com_setup(self, total_lines=1000):
@@ -269,32 +290,19 @@ class Profiler(BaseCamera):
     
     @no_lock
     def start_thread(self):
-        
         self.image_available = False
         if self.scan_data_ready_event is not None:
             try:
                 self.scan_data_ready_event.clear()
             except Exception:
                 pass
-        if self.run_first:
-            self.highspeed_com_setup(self.total_lines)
+        self.start_highspeed_session(self.total_lines)
 
         time.sleep(1) ## Extremely important sleep here!!!
-        # self.camera_ready_event.set()
 
         print('STARTING THREAD')
         self.log.info("start_thread")
-        # my_callback = LJXAwrap.LJX8IF_CALLBACK_SIMPLE_ARRAY(self.callback)
-
         self.profile_data_count = self.profinfo.wProfileDataCount
-        if self.run_first:
-            res = LJXAwrap.LJX8IF_StartHighSpeedDataCommunication(self.device_id)
-            print("Starting high speed communication for device", self.device_id)
-            # self.camera_ready_event.set()
-            self.log.info(f"starting the ocmmunication for devices")
-            if res != 0:
-                print("Error starting")
-            # self.run_first = False
         # start = time.time()
         # while time.time()-start<20:
         #     time.sleep(1)
@@ -312,14 +320,13 @@ class Profiler(BaseCamera):
 
         # if self.image_available:
         #     self.log.info(f"I AM TRUE ALWAYS")
-        
-        if True:#self.close_flag:
-            self.log.info("before the close in threads")
-            _close_start = time.perf_counter()
-            print("[KeyenceTiming] start_thread calling close()")
-            self.close()
-            print(f"[KeyenceTiming] start_thread close() returned in {time.perf_counter() - _close_start:.3f}s")
-            print("[KeyenceTiming] start_thread exiting")
+
+        self.log.info("before the close in threads")
+        _close_start = time.perf_counter()
+        print("[KeyenceTiming] start_thread calling close()")
+        self.close()
+        print(f"[KeyenceTiming] start_thread close() returned in {time.perf_counter() - _close_start:.3f}s")
+        print("[KeyenceTiming] start_thread exiting")
 
     # def stop_communication(self):
     #     LJXAwrap.LJX8IF_StopHighSpeedDataCommunication(self.device_id)
@@ -329,7 +336,7 @@ class Profiler(BaseCamera):
 
     @no_lock
     def start(self, total_lines):
-        self.total_lines = total_lines
+        self.total_lines = int(total_lines)
         self.height_px = int(total_lines)
         self.keyence_producer_thread = threading.Thread(target=self.start_thread, name="ProducerThread")
         self.keyence_producer_thread.start()
