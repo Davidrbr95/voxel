@@ -77,6 +77,12 @@ class Acquisition:
         :param operation_dictionary: dictionary of operation pertaining to device"""
 
         for operation_name, operation_specs in operation_dictionary.items():
+            if not self._is_constructible_operation_spec(operation_specs):
+                self.log.info(
+                    f"skipping non-constructible operation '{device_name}.{operation_name}' "
+                    "(missing one of: type/driver/module)"
+                )
+                continue
             operation_type = inflection.pluralize(operation_specs['type'])
             operation_object = self._construct_class(operation_specs)
 
@@ -104,6 +110,13 @@ class Acquisition:
         self._setup_class(class_object, properties)
 
         return class_object
+
+    @staticmethod
+    def _is_constructible_operation_spec(operation_specs: dict) -> bool:
+        if not isinstance(operation_specs, dict):
+            return False
+        required_keys = ("type", "driver", "module")
+        return all(key in operation_specs for key in required_keys)
 
     @property
     def _acquisition_rate_hz(self):
@@ -161,6 +174,8 @@ class Acquisition:
 
         for device_name, operation_dict in self.config['acquisition']['operations'].items():
             for op_name, op_specs in operation_dict.items():
+                if not self._is_constructible_operation_spec(op_specs):
+                    continue
                 op_type = inflection.pluralize(op_specs['type'])
                 operation = getattr(self, op_type)[device_name][op_name]
                 if hasattr(operation, 'acquisition_name'):
@@ -563,6 +578,8 @@ class Acquisition:
         # update properties of operations
         for device_name, op_dict in self.config['acquisition']['operations'].items():
             for op_name, op_specs in op_dict.items():
+                if not self._is_constructible_operation_spec(op_specs):
+                    continue
                 op = getattr(self, inflection.pluralize(op_specs['type']))[device_name][op_name]
                 op_specs['properties'] = self._collect_properties(op)
         # update properties of metadata

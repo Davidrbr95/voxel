@@ -49,7 +49,7 @@ DCAMCAP_START_SNAP = 0
 
 DCAMBUF_ATTACHKIND_FRAME = 0
 
-BUFFER_SIZE_MB = 2000
+BUFFER_SIZE_MB = 100
 # BUFFER_SIZE_MB = 50000
 
 # 2048 px * 128 px * 16 bits / 2 * 10 cm / (2.2727 um/px) ~ 23 GB
@@ -447,7 +447,7 @@ class Camera(BaseCamera):
         self._update_parameters()
 
     def prepare(self):
-        print("In dcam, start preparing camera...")
+        # print("In dcam, start preparing camera...")
         # determine bits to bytes
         if self.pixel_type == 'mono8':
             bit_to_byte = 1
@@ -461,7 +461,7 @@ class Camera(BaseCamera):
         # realloc buffers appears to be allocating ram on the pc side, not camera side.
         self.dcam.buf_alloc(self.buffer_size_frames)
         self.number_image_buffers = self.buffer_size_frames
-        self.log.info(f"buffer set to: {self.buffer_size_frames} frames")
+        # self.log.info(f"buffer set to: {self.buffer_size_frames} frames")
 
     def defectcorrect(self, defect = False):
         if defect:
@@ -501,7 +501,7 @@ class Camera(BaseCamera):
         self.stop()
 
     def stop(self):
-        status = self.dcam.cap_status()
+        # status = self.dcam.cap_status()
         # print("Camera Status Before Stopping:", status)
         self.dcam.cap_stop()
         self.dcam.buf_release()
@@ -516,8 +516,8 @@ class Camera(BaseCamera):
         self.dcam.prop_setvalue(PROPERTIES["trigger_mode"], TRIGGERS['mode']['normal'])
         self.dcam.prop_setvalue(PROPERTIES["trigger_mode"], TRIGGERS['mode']['start'])
 
-        status = self.dcam.cap_status()
-        print("Camera Status After Stopping:", status)
+        # status = self.dcam.cap_status()
+        # print("Camera Status After Stopping:", status)
 
     def close(self):
         if self.dcam.is_opened():
