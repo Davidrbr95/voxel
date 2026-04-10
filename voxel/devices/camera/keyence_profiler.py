@@ -416,7 +416,7 @@ class Profiler(BaseCamera):
                 pass
         self.start_highspeed_session(self.total_lines)
 
-        time.sleep(0.53) ## Extremely important sleep here!!!
+        time.sleep(0.52) ## Extremely important sleep here!!!
 
         print('STARTING THREAD')
         self.log.info("start_thread")
