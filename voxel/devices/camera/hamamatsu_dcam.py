@@ -49,7 +49,7 @@ DCAMCAP_START_SNAP = 0
 
 DCAMBUF_ATTACHKIND_FRAME = 0
 
-BUFFER_SIZE_MB = 100
+BUFFER_SIZE_MB = 8000
 # BUFFER_SIZE_MB = 50000
 
 # 2048 px * 128 px * 16 bits / 2 * 10 cm / (2.2727 um/px) ~ 23 GB
@@ -546,6 +546,8 @@ class Camera(BaseCamera):
         # Backward-compatible full stop: stop capture and release buffers.
         self.stop_capture_only()
         self.release_buffers()
+
+        # self.dcam.prop_setvalue(PROPERTIES["trigger_mode"], TRIGGERS['mode']['start'])
 
     def close(self):
         if self.dcam.is_opened():
