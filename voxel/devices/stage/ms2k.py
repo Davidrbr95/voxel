@@ -367,7 +367,7 @@ class MS2000(SerialPort):
         args_str = "".join([f" {a.upper()}" for a in args])
         kwds_str = "".join([f" {a.upper()}={v}" for a, v in kwds.items()])
         cmd_str = f"{card_addr_str}{cmd}{args_str}{kwds_str}\r"
-        print('CMD', cmd_str)
+        # print('CMD', cmd_str)
         self.send_command(cmd_str)
         response = self.read_response()
         return response

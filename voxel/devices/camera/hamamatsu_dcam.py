@@ -177,11 +177,15 @@ class Camera(BaseCamera):
     def __init__(self, id: str):
         self.log = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
         self.id = str(id) # convert to string incase serial # is entered as int
+        # Producer can use this to keep driver buffers allocated across tiles.
+        self.persistent_prepare_enabled = True
         self._latest_frame = None
         self.last_frame_number = 0 
         self.number_image_buffers = 0
+        self.buffer_size_frames = 0
         self.max_backlog = 0
         self.buffer_index = 0
+        self._buffers_allocated = False
         DcamapiSingleton.init()
         print('Starting camera initialization')
         if True:#DcamapiSingleton.init() is not False:
@@ -458,9 +462,20 @@ class Camera(BaseCamera):
         self.readoutspeed()
         frame_size_mb = self.width_px*self.height_px/self.binning**2*bit_to_byte/1e6
         self.buffer_size_frames = round(BUFFER_SIZE_MB / frame_size_mb)
-        # realloc buffers appears to be allocating ram on the pc side, not camera side.
-        self.dcam.buf_alloc(self.buffer_size_frames)
-        self.number_image_buffers = self.buffer_size_frames
+        # Reuse existing driver buffers when possible. Reallocate only if needed.
+        needs_realloc = (
+            (not self._buffers_allocated)
+            or int(self.number_image_buffers) != int(self.buffer_size_frames)
+        )
+        if needs_realloc:
+            if self._buffers_allocated:
+                try:
+                    self.dcam.buf_release()
+                except Exception:
+                    pass
+            self.dcam.buf_alloc(self.buffer_size_frames)
+            self.number_image_buffers = self.buffer_size_frames
+            self._buffers_allocated = True
         # self.log.info(f"buffer set to: {self.buffer_size_frames} frames")
 
     def defectcorrect(self, defect = False):
@@ -477,9 +492,7 @@ class Camera(BaseCamera):
 
     def start(self, frames = GENTL_INFINITE):
         # initialize variables for acquisition run
-        self.dropped_frames = 0
-        self.pre_frame_time = 0
-        self.pre_frame_count_px = 0
+        self.clear_runtime_state()
         self.buffer_index = -1
         self.dcam.cap_start()
     
@@ -500,31 +513,44 @@ class Camera(BaseCamera):
     def abort(self):
         self.stop()
 
-    def stop(self):
-        # status = self.dcam.cap_status()
-        # print("Camera Status Before Stopping:", status)
-        self.dcam.cap_stop()
-        self.dcam.buf_release()
+    def clear_runtime_state(self):
+        self.dropped_frames = 0
+        self.pre_frame_time = 0
+        self.pre_frame_count_px = 0
         self.max_backlog = 0
         self._latest_frame = None
         self.buffer_index = 0
-        self.last_frame_number = 0 
-        # self.reset()
+        self.last_frame_number = 0
 
-        # Hardcoding to reset the trigger, not the best ideal way
-        # Ideal way would be using the reset()...
-        self.dcam.prop_setvalue(PROPERTIES["trigger_mode"], TRIGGERS['mode']['normal'])
+    def stop_capture_only(self):
+        try:
+            self.dcam.cap_stop()
+        except Exception:
+            pass
+        self.clear_runtime_state()
+
+        # Keep legacy trigger reset behavior.
+        # self.dcam.prop_setvalue(PROPERTIES["trigger_mode"], TRIGGERS['mode']['normal'])
         self.dcam.prop_setvalue(PROPERTIES["trigger_mode"], TRIGGERS['mode']['start'])
 
-        # status = self.dcam.cap_status()
-        # print("Camera Status After Stopping:", status)
+    def release_buffers(self):
+        if self._buffers_allocated:
+            try:
+                self.dcam.buf_release()
+            except Exception:
+                pass
+            self._buffers_allocated = False
+            self.number_image_buffers = 0
+
+    def stop(self):
+        # Backward-compatible full stop: stop capture and release buffers.
+        self.stop_capture_only()
+        self.release_buffers()
 
     def close(self):
         if self.dcam.is_opened():
-            self._latest_frame = None
-            self.last_frame_number = 0 
-            self.max_backlog = 0
-            self.buffer_index = 0
+            self.stop_capture_only()
+            self.release_buffers()
             if self.dcam is not None:
                 self.dcam.dev_close()
             DcamapiSingleton.uninit()

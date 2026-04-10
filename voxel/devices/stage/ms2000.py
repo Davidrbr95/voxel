@@ -202,7 +202,7 @@ class Stage(BaseStage):
 
     def start(self):
         if self.mode == 'stage scan':
-            self.ms2000.start_scan()
+            self.ms2000.start_scan(wait=False)
 
     def close(self):
         self.ms2000.disconnect_from_serial()
