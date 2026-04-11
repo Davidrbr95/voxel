@@ -156,6 +156,8 @@ class ZarrWriter(BaseWriter):
             frame_count_px = ceil(frame_count_px / DIVISIBLE_FRAME_COUNT_PX) * DIVISIBLE_FRAME_COUNT_PX
             self.log.info(f"adjusting frame count to: {frame_count_px} [px]")
         self._frame_count_px = frame_count_px
+        # Keep legacy/internal field in sync because prepare() still references it.
+        self._frame_count_px_px = frame_count_px
 
     @property
     def chunk_count_px(self) -> int:
