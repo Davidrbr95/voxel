@@ -480,7 +480,7 @@ class MS2000(SerialPort):
         """Move the stage with an absolute move."""
         self.send_command_v2(f"MOVE {axis}={distance}")
         self.read_response_slow()
-        # time.sleep(0.004)
+        time.sleep(0.05)
 
     def move_xyz(self, x: int, y: int, z: int, slow: bool = False) -> None:
         """Move X/Y/Z together with one absolute MOVE command."""
