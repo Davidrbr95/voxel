@@ -504,7 +504,7 @@ class MS2000(SerialPort):
 
         cmd = "H " + " ".join(args)
         self.send_command_v2(cmd)
-        reply = self.read_response_FAST()
+        reply = self.read_response_V2()
         self.check_reply_for_errors(reply)
         return reply
  
