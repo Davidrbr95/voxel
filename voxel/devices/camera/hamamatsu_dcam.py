@@ -304,7 +304,21 @@ class Camera(BaseCamera):
         pixel_type = self.dcam.prop_getvalue(PROPERTIES["pixel_type"])
         # invert the dictionary and find the abstracted key to output
         print(f"Looking up pixel_type, current raw value: {pixel_type}")
-        return next(key for key, value in PIXEL_TYPES.items() if value == pixel_type)
+        if not PIXEL_TYPES:
+            try:
+                self._query_pixel_types()
+            except Exception:
+                pass
+        for key, value in PIXEL_TYPES.items():
+            try:
+                if int(value) == int(pixel_type):
+                    return key
+            except Exception:
+                if value == pixel_type:
+                    return key
+        fallback = f"unknown_{pixel_type}"
+        self.log.warning(f"unmapped pixel_type raw value: {pixel_type}; returning {fallback}")
+        return fallback
 
     @pixel_type.setter
     def pixel_type(self, pixel_type_bits: str):
@@ -477,6 +491,30 @@ class Camera(BaseCamera):
             self.number_image_buffers = self.buffer_size_frames
             self._buffers_allocated = True
         # self.log.info(f"buffer set to: {self.buffer_size_frames} frames")
+
+    def prepare_snapshot(self, buffer_frames=2):
+        """
+        Prepare the camera for a one-shot capture with a very small driver buffer.
+        This avoids allocating the large streaming buffer budget for a single frame.
+        """
+        desired_buffers = max(1, int(buffer_frames))
+        self.defectcorrect()
+        self.setSubArrayMode()
+        self.readoutspeed()
+        needs_realloc = (
+            (not self._buffers_allocated)
+            or int(self.number_image_buffers) != desired_buffers
+        )
+        if needs_realloc:
+            if self._buffers_allocated:
+                try:
+                    self.dcam.buf_release()
+                except Exception:
+                    pass
+            self.dcam.buf_alloc(desired_buffers)
+            self.number_image_buffers = desired_buffers
+            self._buffers_allocated = True
+        self.buffer_size_frames = desired_buffers
 
     def defectcorrect(self, defect = False):
         if defect:
@@ -869,6 +907,29 @@ class Camera(BaseCamera):
             image = self.dcam.buf_getlastframedata()
             self._latest_frame  = image
             return image
+
+    def capture_snapshot_frame(self, timeout_ms=10000):
+        """
+        Capture and return a single frame using DCAM snapshot mode.
+        """
+        timeout_ms = max(1, int(timeout_ms))
+        self.clear_runtime_state()
+        self.buffer_index = -1
+        if self.dcam.cap_snapshot() is False:
+            raise RuntimeError("Hamamatsu DCAM cap_snapshot() failed.")
+        if self.dcam.wait_capevent_frameready(timeout_ms) is False:
+            try:
+                self.stop_capture_only()
+            except Exception:
+                pass
+            raise TimeoutError(f"Hamamatsu DCAM snapshot timed out after {timeout_ms} ms.")
+        image = self.dcam.buf_getlastframedata()
+        self._latest_frame = image
+        try:
+            self.stop_capture_only()
+        except Exception:
+            pass
+        return image
 
     @property
     def latest_frame(self):
