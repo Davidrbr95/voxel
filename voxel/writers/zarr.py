@@ -152,9 +152,7 @@ class ZarrWriter(BaseWriter):
         :type value: int
         """
         self.log.info(f"setting frame count to: {frame_count_px} [px]")
-        if frame_count_px % DIVISIBLE_FRAME_COUNT_PX != 0:
-            frame_count_px = ceil(frame_count_px / DIVISIBLE_FRAME_COUNT_PX) * DIVISIBLE_FRAME_COUNT_PX
-            self.log.info(f"adjusting frame count to: {frame_count_px} [px]")
+        frame_count_px = int(max(0, frame_count_px))
         self._frame_count_px = frame_count_px
         # Keep legacy/internal field in sync because prepare() still references it.
         self._frame_count_px_px = frame_count_px
@@ -463,7 +461,7 @@ class ZarrWriter(BaseWriter):
             affine_shift
         )
         # voxel size metadata to create the converter
-        image_size_z = int(ceil(self._frame_count_px / CHUNK_COUNT_PX) * CHUNK_COUNT_PX)
+        image_size_z = int(self._frame_count_px)
         image_size = pw.ImageSize(
             x=self._column_count_px, y=self._row_count_px, z=image_size_z, c=1, t=1
         )
@@ -748,12 +746,20 @@ class ZarrWriter(BaseWriter):
             # Attach a reference to the data from shared memory.
             shm = SharedMemory(self.shm_name, create=False, size=shm_nbytes)
             frames = np.ndarray(shm_shape, self._data_type, buffer=shm.buf)
+            frame_start = int(chunk_num * CHUNK_COUNT_PX)
+            remaining_frames = int(self._frame_count_px - frame_start)
+            valid_frames = int(min(int(frames.shape[0]), max(0, remaining_frames)))
+            if valid_frames <= 0:
+                shm.close()
+                self.done_reading.set()
+                shared_progress.value = 1.0
+                break
             # shared_log_queue.put(
             #     f"{self._filename}: writing chunk " f"{chunk_num + 1}/{chunk_total} of size {frames.shape}."
             # )
             start_time = perf_counter()
             # Put the frames into the stream
-            stream.append(frames)
+            stream.append(frames[:valid_frames])
             frames = None
             # shared_log_queue.put(f"{self._filename}: writing chunk took " f"{perf_counter() - start_time:.2f} [s]")
             shm.close()
@@ -762,6 +768,22 @@ class ZarrWriter(BaseWriter):
             shared_progress.value = (chunk_num + 1) / chunk_total
 
             # shared_log_queue.put(f"{self._filename}: {self._progress.value * 100:.2f} [%] complete.")
+
+        try:
+            import zarr
+
+            root = zarr.open(str(filepath), mode="a")
+            try:
+                root.attrs["valid_frame_count_px"] = int(self._frame_count_px)
+            except Exception:
+                pass
+            try:
+                if "0" in root:
+                    root["0"].attrs["valid_frame_count_px"] = int(self._frame_count_px)
+            except Exception:
+                pass
+        except Exception:
+            pass
 
         # check and empty queue to avoid code hanging in process
         if not shared_log_queue.empty:

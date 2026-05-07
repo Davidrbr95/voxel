@@ -97,13 +97,7 @@ class ImarisWriter(BaseWriter):
         """
 
         self.log.info(f"setting frame count to: {frame_count_px} [px]")
-        if frame_count_px % DIVISIBLE_FRAME_COUNT_PX != 0:
-            frame_count_px = (
-                ceil(frame_count_px / DIVISIBLE_FRAME_COUNT_PX)
-                * DIVISIBLE_FRAME_COUNT_PX
-            )
-            self.log.info(f"adjusting frame count to: {frame_count_px} [px]")
-        self._frame_count_px = frame_count_px
+        self._frame_count_px = int(max(0, frame_count_px))
 
     @property
     def chunk_count_px(self):
@@ -343,7 +337,7 @@ class ImarisWriter(BaseWriter):
         )
 
         # voxel size metadata to create the converter
-        image_size_z = int(ceil(self._frame_count_px / CHUNK_COUNT_PX) * CHUNK_COUNT_PX)
+        image_size_z = int(self._frame_count_px)
         image_size = pw.ImageSize(
             x=self._column_count_px, y=self._row_count_px, z=image_size_z, c=1, t=1
         )
@@ -719,6 +713,14 @@ class ImarisWriter(BaseWriter):
             # Attach a reference to the data from shared memory.
             shm = SharedMemory(self.shm_name, create=False, size=shm_nbytes)
             frames = np.ndarray(shm_shape, self._data_type, buffer=shm.buf)
+            frame_start = int(chunk_num * CHUNK_COUNT_PX)
+            remaining_frames = int(self._frame_count_px - frame_start)
+            valid_frames = int(min(int(frames.shape[0]), max(0, remaining_frames)))
+            if valid_frames <= 0:
+                shm.close()
+                self.done_reading.set()
+                shared_progress.value = 1.0
+                break
             shared_log_queue.put(
                 f"{self._filename}: writing chunk "
                 f"{chunk_num+1}/{chunk_total} of size {frames.shape}."
@@ -726,7 +728,7 @@ class ImarisWriter(BaseWriter):
             start_time = perf_counter()
             dim_order = [dim_map[x] for x in chunk_dim_order]
             # Put the frames back into x, y, z, c, t order.
-            converter.CopyBlock(frames.transpose(dim_order), block_index)
+            converter.CopyBlock(frames[:valid_frames].transpose(dim_order), block_index)
             frames = None
             shared_log_queue.put(
                 f"{self._filename}: writing chunk took "

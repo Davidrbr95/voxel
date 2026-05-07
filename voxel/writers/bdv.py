@@ -94,13 +94,7 @@ class BDVWriter(BaseWriter):
         """
 
         self.log.info(f"setting frame count to: {frame_count_px} [px]")
-        if frame_count_px % DIVISIBLE_FRAME_COUNT_PX != 0:
-            frame_count_px = (
-                ceil(frame_count_px / DIVISIBLE_FRAME_COUNT_PX)
-                * DIVISIBLE_FRAME_COUNT_PX
-            )
-            self.log.info(f"adjusting frame count to: {frame_count_px} [px]")
-        self._frame_count_px_px = frame_count_px
+        self._frame_count_px_px = int(max(0, frame_count_px))
 
     @property
     def chunk_count_px(self):
@@ -412,9 +406,7 @@ class BDVWriter(BaseWriter):
         # append all views based to bdv writer
         # this is necessary for bdv writer to have the metadata to write the xml at the end
         # if a view already exists in the bdv file, it will be skipped and not overwritten
-        image_size_z = int(
-            ceil(self._frame_count_px_px / CHUNK_COUNT_PX) * CHUNK_COUNT_PX
-        )
+        image_size_z = int(self._frame_count_px_px)
         for append_tile, append_channel in self.dataset_dict:
             # print('BDV writere', image_size_z, self._row_count_px, self._column_count_px, self.voxel_size_dict[(append_tile, append_channel)])
             bdv_writer.append_view(
@@ -439,6 +431,14 @@ class BDVWriter(BaseWriter):
             # print('self._data_type', self._data_type)
             shm = SharedMemory(self.shm_name, create=False, size=shm_nbytes)
             frames = np.ndarray(shm_shape, self._data_type, buffer=shm.buf)
+            frame_start = int(chunk_num * CHUNK_COUNT_PX)
+            remaining_frames = int(self._frame_count_px_px - frame_start)
+            valid_frames = int(min(int(frames.shape[0]), max(0, remaining_frames)))
+            if valid_frames <= 0:
+                shm.close()
+                self.done_reading.set()
+                shared_progress.value = 1.0
+                break
             # print('checking when get frames', frames.dtype)
             shared_log_queue.put(
                 f"{self._filename}: writing chunk "
@@ -448,7 +448,7 @@ class BDVWriter(BaseWriter):
             # write substack of data to BDV file at correct z position
             # current_tile_num and current_channel_num ensure it writes to the correct location
             bdv_writer.append_substack(
-                frames,
+                frames[:valid_frames],
                 z_start=chunk_num * CHUNK_COUNT_PX,
                 tile=self.current_tile_num,
                 channel=self.current_channel_num,
