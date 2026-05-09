@@ -361,10 +361,34 @@ class Camera(BaseCamera):
         mode = self.dcam.prop_getvalue(PROPERTIES["trigger_mode"])
         polarity = self.dcam.prop_getvalue(PROPERTIES["trigger_polarity"])
         active = self.dcam.prop_getvalue(PROPERTIES["trigger_active"])
-        return {"mode": {v:k for k, v in TRIGGERS['mode'].items()}[mode],
-                "source": {v:k for k, v in TRIGGERS['source'].items()}[source],
-                "polarity": {v: k for k, v in TRIGGERS['polarity'].items()}[polarity],
-                "active": {v: k for k, v in TRIGGERS['active'].items()}[active]}
+
+        def _decode(raw_value, table: dict, field_name: str):
+            reverse = {v: k for k, v in table.items()}
+            if raw_value in reverse:
+                return reverse[raw_value]
+            # Some SDK states may report bool-like or float-like values; coerce defensively.
+            try:
+                if isinstance(raw_value, bool):
+                    coerced = int(raw_value)
+                    if coerced in reverse:
+                        return reverse[coerced]
+                if isinstance(raw_value, (int, float)):
+                    as_int = int(raw_value)
+                    if as_int in reverse:
+                        return reverse[as_int]
+            except Exception:
+                pass
+            self.log.warning(
+                f"unknown trigger {field_name} value from SDK: {raw_value!r}; returning raw value"
+            )
+            return raw_value
+
+        return {
+            "mode": _decode(mode, TRIGGERS["mode"], "mode"),
+            "source": _decode(source, TRIGGERS["source"], "source"),
+            "polarity": _decode(polarity, TRIGGERS["polarity"], "polarity"),
+            "active": _decode(active, TRIGGERS["active"], "active"),
+        }
 
     @trigger.setter
     def trigger(self, trigger: dict):
