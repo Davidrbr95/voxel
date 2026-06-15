@@ -52,8 +52,8 @@ DCAMBUF_ATTACHKIND_FRAME = 0
 BUFFER_SIZE_MB = 6000
 # BUFFER_SIZE_MB = 50000
 
-# 2048 px * 128 px * 16 bits / 2 * 10 cm / (2.2727 um/px) ~ 23 GB
-# 2048 px * 32 px * 16 bits / 2 * 10 cm / (2.2727 um/px) ~ 5.7 GB
+# ODO ring-buffer memory scales with scan length / nominal um-per-frame sampling.
+# The current ODO sampling is configured in Control/odo_calibration.yaml.
 
 # subarray parameter values
 SUBARRAY_OFF = 1

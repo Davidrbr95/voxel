@@ -485,6 +485,7 @@ class MS2000(SerialPort):
     def move_xyz(self, x: int, y: int, z: int, slow: bool = False) -> None:
         """Move X/Y/Z together with one absolute MOVE command."""
         self.send_command_v2(f"MOVE X={x} Y={y} Z={z}")
+        # self.send_command_v2(f"MOVE Y={y} Z={z}")
         if slow:
             self.read_response_slow()
         else:
