@@ -89,6 +89,9 @@ class Profiler(BaseCamera):
         self.total_lines_acquired = 0
         self.profile_data_count = 0
         self.image_available = False
+        self.profile_header_sample_stride = 10
+        self.profile_header_samples = []
+        self.profile_header_sample_count = 0
         self.z_val = []
         self.lumi_val = []
         self._batch_measurement_cached = None
@@ -201,6 +204,8 @@ class Profiler(BaseCamera):
         self.profile_data_count = 0
         self.image_available = False
         self.total_lines_acquired = 0
+        self.profile_header_samples = []
+        self.profile_header_sample_count = 0
         self._profile_width = 3200
         print(f"[KeyenceTiming] highspeed_com_setup state_reset={time.perf_counter() - _t0:.3f}s")
 
@@ -772,6 +777,76 @@ class Profiler(BaseCamera):
         self._set_setting(category=0x00, item=0x0A, value=[bc_value[1], bc_value[0], 0, 0])
 
     @no_lock
+    def _capture_profile_header_samples(
+        self,
+        p_header,
+        profnum,
+        xpointnum,
+        notify,
+        luminance_enable,
+        callback_perf_s,
+        callback_wall_s,
+    ):
+        try:
+            profnum = int(profnum)
+        except Exception:
+            profnum = 0
+        if profnum <= 0 or not p_header:
+            self.profile_header_samples = []
+            self.profile_header_sample_count = 0
+            return
+        try:
+            stride = int(getattr(self, "profile_header_sample_stride", 10) or 10)
+        except Exception:
+            stride = 10
+        stride = max(1, int(stride))
+
+        sample_indices = set(range(0, profnum, stride))
+        sample_indices.add(profnum - 1)
+        rows = []
+        for raw_idx in sorted(sample_indices):
+            try:
+                header = p_header[int(raw_idx)]
+                rows.append(
+                    {
+                        "raw_profile_index": int(raw_idx),
+                        "dwTriggerCount": int(header.dwTriggerCount),
+                        "lEncoderCount": int(header.lEncoderCount),
+                        "callback_wall_time_s": float(callback_wall_s),
+                        "callback_perf_time_s": float(callback_perf_s),
+                        "callback_profile_count": int(profnum),
+                        "xpointnum": int(xpointnum),
+                        "notify": int(notify),
+                        "luminance_enable": int(luminance_enable),
+                        "sample_stride": int(stride),
+                        "total_lines": int(getattr(self, "total_lines", 0) or 0),
+                    }
+                )
+            except Exception as exc:
+                rows.append(
+                    {
+                        "raw_profile_index": int(raw_idx),
+                        "dwTriggerCount": "",
+                        "lEncoderCount": "",
+                        "callback_wall_time_s": float(callback_wall_s),
+                        "callback_perf_time_s": float(callback_perf_s),
+                        "callback_profile_count": int(profnum),
+                        "xpointnum": int(xpointnum),
+                        "notify": int(notify),
+                        "luminance_enable": int(luminance_enable),
+                        "sample_stride": int(stride),
+                        "total_lines": int(getattr(self, "total_lines", 0) or 0),
+                        "error": repr(exc),
+                    }
+                )
+        self.profile_header_samples = rows
+        self.profile_header_sample_count = len(rows)
+
+    @no_lock
+    def get_profile_header_samples(self):
+        return list(getattr(self, "profile_header_samples", []) or [])
+
+    @no_lock
     def callback(self, p_header, p_height, p_lumi, luminance_enable, xpointnum, profnum, notify, user):
         self.log.info('WE ARE IN CALL BACK')
 
@@ -782,6 +857,20 @@ class Profiler(BaseCamera):
                 print('C1')
                 if self.image_available is False:
                     print('C2')
+                    callback_perf_s = time.perf_counter()
+                    callback_wall_s = time.time()
+                    try:
+                        self._capture_profile_header_samples(
+                            p_header,
+                            profnum,
+                            xpointnum,
+                            notify,
+                            luminance_enable,
+                            callback_perf_s,
+                            callback_wall_s,
+                        )
+                    except Exception as exc:
+                        print(f"[Warning] [KeyenceProfileHeader] capture failed: {exc!r}")
                     _copy_start = time.perf_counter()
                     copy_len = int(xpointnum) * int(profnum)
                     z_copy_len = min(copy_len, len(self.z_val))
