@@ -88,10 +88,14 @@ class Profiler(BaseCamera):
         self.total_lines = 0
         self.total_lines_acquired = 0
         self.profile_data_count = 0
+        self.highspeed_callback_profile_count = 10
+        self.highspeed_callback_timeout_s = 120.0
         self.image_available = False
         self.profile_header_sample_stride = 10
         self.profile_header_samples = []
         self.profile_header_sample_count = 0
+        self._callback_profile_write_index = 0
+        self._callback_block_count = 0
         self.z_val = []
         self.lumi_val = []
         self._batch_measurement_cached = None
@@ -206,11 +210,17 @@ class Profiler(BaseCamera):
         self.total_lines_acquired = 0
         self.profile_header_samples = []
         self.profile_header_sample_count = 0
+        self._callback_profile_write_index = 0
+        self._callback_block_count = 0
         self._profile_width = 3200
         print(f"[KeyenceTiming] highspeed_com_setup state_reset={time.perf_counter() - _t0:.3f}s")
 
         _t0 = time.perf_counter()
         self._ensure_raw_buffers(self.total_lines, self._profile_width)
+        if isinstance(self._raw_z_flat, np.ndarray):
+            self._raw_z_flat.fill(0)
+        if isinstance(self._raw_lumi_flat, np.ndarray):
+            self._raw_lumi_flat.fill(0)
         print(f"[KeyenceTiming] highspeed_com_setup buffer_ready={time.perf_counter() - _t0:.3f}s")
         print('P2')
 
@@ -255,17 +265,27 @@ class Profiler(BaseCamera):
         )
 
         _t0 = time.perf_counter()
+        try:
+            callback_profile_count = int(getattr(self, "highspeed_callback_profile_count", 0) or 0)
+        except Exception:
+            callback_profile_count = 0
+        if callback_profile_count <= 0:
+            callback_profile_count = int(self.total_lines)
+        callback_profile_count = max(1, min(int(callback_profile_count), int(self.total_lines)))
         res = LJXAwrap.LJX8IF_InitializeHighSpeedDataCommunicationSimpleArray(
             self.device_id,
             self.ethernetConfig,
             self.hsportno,
             self.my_callback,
-            self.total_lines,
+            callback_profile_count,
             0
         )
         print('P5')
         print("Initializing high speed communication for device", self.device_id)
-        print(f"[KeyenceTiming] highspeed_com_setup InitializeHighSpeedDataCommunication={time.perf_counter() - _t0:.3f}s")
+        print(
+            f"[KeyenceTiming] highspeed_com_setup InitializeHighSpeedDataCommunication={time.perf_counter() - _t0:.3f}s "
+            f"callback_profiles={callback_profile_count} total_lines={self.total_lines}"
+        )
         if res != 0:
             print("Error initializing - res - prep")
 
@@ -438,6 +458,17 @@ class Profiler(BaseCamera):
         _wait_start = time.perf_counter()
         while not self.image_available:
             self.log.info(f"image available {self.image_available}")
+            elapsed_wait_s = time.perf_counter() - _wait_start
+            timeout_s = float(getattr(self, "highspeed_callback_timeout_s", 120.0) or 120.0)
+            if timeout_s > 0 and elapsed_wait_s > timeout_s:
+                acquired = int(getattr(self, "total_lines_acquired", 0) or 0)
+                print(
+                    "[Warning] [KeyenceTiming] start_thread callback wait timeout "
+                    f"elapsed_s={elapsed_wait_s:.3f} acquired_profiles={acquired}/{int(self.total_lines)} "
+                    "forcing image_available=True for partial/zero-padded tile."
+                )
+                self.image_available = True
+                break
             time.sleep(1)
         print(f"[KeyenceTiming] start_thread image_available=True after {time.perf_counter() - _wait_start:.3f}s")
 
@@ -800,21 +831,30 @@ class Profiler(BaseCamera):
         except Exception:
             stride = 10
         stride = max(1, int(stride))
+        try:
+            base_raw_index = int(getattr(self, "_callback_profile_write_index", 0) or 0)
+        except Exception:
+            base_raw_index = 0
 
         sample_indices = set(range(0, profnum, stride))
         sample_indices.add(profnum - 1)
         rows = []
         for raw_idx in sorted(sample_indices):
+            global_raw_idx = int(base_raw_index) + int(raw_idx)
             try:
                 header = p_header[int(raw_idx)]
                 rows.append(
                     {
-                        "raw_profile_index": int(raw_idx),
+                        "raw_profile_index": int(global_raw_idx),
+                        "callback_local_profile_index": int(raw_idx),
                         "dwTriggerCount": int(header.dwTriggerCount),
                         "lEncoderCount": int(header.lEncoderCount),
                         "callback_wall_time_s": float(callback_wall_s),
                         "callback_perf_time_s": float(callback_perf_s),
                         "callback_profile_count": int(profnum),
+                        "callback_block_index": int(getattr(self, "_callback_block_count", 0) or 0),
+                        "callback_global_profile_start": int(base_raw_index),
+                        "callback_global_profile_end_exclusive": int(base_raw_index) + int(profnum),
                         "xpointnum": int(xpointnum),
                         "notify": int(notify),
                         "luminance_enable": int(luminance_enable),
@@ -825,12 +865,16 @@ class Profiler(BaseCamera):
             except Exception as exc:
                 rows.append(
                     {
-                        "raw_profile_index": int(raw_idx),
+                        "raw_profile_index": int(global_raw_idx),
+                        "callback_local_profile_index": int(raw_idx),
                         "dwTriggerCount": "",
                         "lEncoderCount": "",
                         "callback_wall_time_s": float(callback_wall_s),
                         "callback_perf_time_s": float(callback_perf_s),
                         "callback_profile_count": int(profnum),
+                        "callback_block_index": int(getattr(self, "_callback_block_count", 0) or 0),
+                        "callback_global_profile_start": int(base_raw_index),
+                        "callback_global_profile_end_exclusive": int(base_raw_index) + int(profnum),
                         "xpointnum": int(xpointnum),
                         "notify": int(notify),
                         "luminance_enable": int(luminance_enable),
@@ -839,8 +883,8 @@ class Profiler(BaseCamera):
                         "error": repr(exc),
                     }
                 )
-        self.profile_header_samples = rows
-        self.profile_header_sample_count = len(rows)
+        self.profile_header_samples.extend(rows)
+        self.profile_header_sample_count = len(self.profile_header_samples)
 
     @no_lock
     def get_profile_header_samples(self):
@@ -850,13 +894,9 @@ class Profiler(BaseCamera):
     def callback(self, p_header, p_height, p_lumi, luminance_enable, xpointnum, profnum, notify, user):
         self.log.info('WE ARE IN CALL BACK')
 
-        print('In Keyence, we are in callback')
-        print(f'In Keyence, the status of luminance_enable is {luminance_enable}')
         if (notify == 0) or (notify == 0x10000):
             if profnum != 0:
-                print('C1')
                 if self.image_available is False:
-                    print('C2')
                     callback_perf_s = time.perf_counter()
                     callback_wall_s = time.time()
                     try:
@@ -872,49 +912,70 @@ class Profiler(BaseCamera):
                     except Exception as exc:
                         print(f"[Warning] [KeyenceProfileHeader] capture failed: {exc!r}")
                     _copy_start = time.perf_counter()
-                    copy_len = int(xpointnum) * int(profnum)
-                    z_copy_len = min(copy_len, len(self.z_val))
+                    width = int(xpointnum)
+                    profnum_i = int(profnum)
+                    start_profile = max(0, int(getattr(self, "_callback_profile_write_index", 0) or 0))
+                    remaining_profiles = max(0, int(self.total_lines) - int(start_profile))
+                    write_profiles = min(profnum_i, remaining_profiles)
+                    copy_len = int(width) * int(write_profiles)
+                    flat_start = int(start_profile) * int(width)
+                    flat_end = int(flat_start) + int(copy_len)
+                    z_copy_len = min(copy_len, max(0, len(self.z_val) - flat_start))
 
                     if isinstance(self._raw_z_flat, np.ndarray):
                         try:
-                            src_height = np.ctypeslib.as_array(p_height, shape=(z_copy_len,))
-                            np.copyto(self._raw_z_flat[:z_copy_len], src_height, casting="unsafe")
-                            if z_copy_len < self._raw_z_flat.size:
-                                self._raw_z_flat[z_copy_len:] = 0
+                            src_height = np.ctypeslib.as_array(p_height, shape=(max(0, z_copy_len),))
+                            if z_copy_len > 0:
+                                np.copyto(self._raw_z_flat[flat_start:flat_start + z_copy_len], src_height, casting="unsafe")
                         except Exception:
                             for i in range(z_copy_len):
-                                self._raw_z_flat[i] = p_height[i]
+                                self._raw_z_flat[flat_start + i] = p_height[i]
                     else:
                         for i in range(z_copy_len):
-                            self.z_val[i] = p_height[i]
+                            self.z_val[flat_start + i] = p_height[i]
 
                     if int(luminance_enable) == 1:
-                        lumi_copy_len = min(copy_len, len(self.lumi_val))
+                        lumi_copy_len = min(copy_len, max(0, len(self.lumi_val) - flat_start))
                         if isinstance(self._raw_lumi_flat, np.ndarray):
                             try:
-                                src_lumi = np.ctypeslib.as_array(p_lumi, shape=(lumi_copy_len,))
-                                np.copyto(self._raw_lumi_flat[:lumi_copy_len], src_lumi, casting="unsafe")
-                                if lumi_copy_len < self._raw_lumi_flat.size:
-                                    self._raw_lumi_flat[lumi_copy_len:] = 0
+                                src_lumi = np.ctypeslib.as_array(p_lumi, shape=(max(0, lumi_copy_len),))
+                                if lumi_copy_len > 0:
+                                    np.copyto(self._raw_lumi_flat[flat_start:flat_start + lumi_copy_len], src_lumi, casting="unsafe")
                             except Exception:
                                 for i in range(lumi_copy_len):
-                                    self._raw_lumi_flat[i] = p_lumi[i]
+                                    self._raw_lumi_flat[flat_start + i] = p_lumi[i]
                         else:
                             for i in range(lumi_copy_len):
-                                self.lumi_val[i] = p_lumi[i]
+                                self.lumi_val[flat_start + i] = p_lumi[i]
 
                     copy_elapsed = time.perf_counter() - _copy_start
                     self._perf_counters["callback_copy_count"] += 1
                     self._callback_copy_total_s += copy_elapsed
                     self._callback_copy_max_s = max(self._callback_copy_max_s, copy_elapsed)
-                    print(
-                        "[KeyenceTiming] callback_copy "
-                        f"copy_len={copy_len} elapsed_s={copy_elapsed:.6f} "
-                        f"count={self._perf_counters['callback_copy_count']}"
+                    self._callback_block_count += 1
+                    self._callback_profile_write_index = int(start_profile) + int(write_profiles)
+                    progress_stride = max(1, int(self.total_lines) // 10)
+                    done = bool(self._callback_profile_write_index >= int(self.total_lines))
+                    should_print = bool(
+                        done
+                        or start_profile == 0
+                        or (
+                            progress_stride > 0
+                            and self._callback_profile_write_index % progress_stride == 0
+                        )
                     )
-                    print('C3')
-                    self.total_lines_acquired = profnum
-                    self.image_available = True
+                    if should_print:
+                        print(
+                            "[KeyenceTiming] callback_copy "
+                            f"profiles={write_profiles}/{profnum_i} "
+                            f"profile_range={start_profile}:{self._callback_profile_write_index} "
+                            f"copy_len={copy_len} elapsed_s={copy_elapsed:.6f} "
+                            f"count={self._perf_counters['callback_copy_count']} "
+                            f"done={int(done)}"
+                        )
+                    self.total_lines_acquired = int(self._callback_profile_write_index)
+                    if done:
+                        self.image_available = True
         return
 
     # @no_lock
