@@ -575,6 +575,16 @@ class MS2000(SerialPort):
         response = self.read_response_slow()
         # print(response)
         return float(response.split(" ")[1])/10000.0, float(response.split(" ")[2])/10000.0
+
+    def get_xyz_position_mm(self) -> float:
+        """Return the position of the stage in mm for x, y, and z."""
+        self.send_command(f"WHERE X Y Z")
+        response = self.read_response()
+        return (
+            float(response.split(" ")[1]) / 10000.0,
+            float(response.split(" ")[2]) / 10000.0,
+            float(response.split(" ")[3]) / 10000.0,
+        )
     
     def get_xzf_position_mm(self) -> float:
         """Return the position of the stage in mm for x and z"""

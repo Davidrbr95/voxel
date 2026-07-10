@@ -328,6 +328,9 @@ class Stage(BaseStage):
 
     def get_xz_position_slow_mm(self):
         return self.ms2000.get_xz_position_slow_mm()
+
+    def get_xyz_position_mm(self):
+        return self.ms2000.get_xyz_position_mm()
     
     def get_xzf_position_mm(self):
         return self.ms2000.get_xzf_position_mm()
