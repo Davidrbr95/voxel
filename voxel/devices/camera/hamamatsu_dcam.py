@@ -190,17 +190,6 @@ class Camera(BaseCamera):
         print('Starting camera initialization')
         if True:#DcamapiSingleton.init() is not False:
             num_cams = DcamapiSingleton.get_devicecount()
-            # for cam in range(0, num_cams):
-            #     dcam = Dcam(cam)
-            #     cam_id = dcam.dev_getstring(DCAM_IDSTR.CAMERAID)
-            #     if cam_id.replace("S/N: ","") == self.id:
-            #         self.log.info(f"camera found for S/N: {self.id}")
-            #         self.dcam = dcam
-            #         self.cam_num = cam
-            #         # open camera
-            #         self.dcam.dev_open()
-            #         break
-            # del dcam
             for cam in range(0, num_cams):
                 dcam = Dcam(cam)
                 cam_id = dcam.dev_getstring(DCAM_IDSTR.CAMERAID)
