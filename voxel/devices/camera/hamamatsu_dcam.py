@@ -186,19 +186,46 @@ class Camera(BaseCamera):
         self.max_backlog = 0
         self.buffer_index = 0
         self._buffers_allocated = False
-        DcamapiSingleton.init()
+        init_total_t0 = time.perf_counter()
+        dcamapi_init_t0 = time.perf_counter()
+        dcamapi_initialized = DcamapiSingleton.init()
+        print(
+            f"[TIMER][HAMAMATSU][OPEN] dcamapi_init serial={self.id} "
+            f"result={dcamapi_initialized} elapsed_s={time.perf_counter() - dcamapi_init_t0:.3f}"
+        )
         print('Starting camera initialization')
         if True:#DcamapiSingleton.init() is not False:
+            device_count_t0 = time.perf_counter()
             num_cams = DcamapiSingleton.get_devicecount()
+            print(
+                f"[TIMER][HAMAMATSU][OPEN] get_devicecount serial={self.id} "
+                f"count={num_cams} elapsed_s={time.perf_counter() - device_count_t0:.3f}"
+            )
             for cam in range(0, num_cams):
+                dcam_object_t0 = time.perf_counter()
                 dcam = Dcam(cam)
+                dcam_object_s = time.perf_counter() - dcam_object_t0
+                serial_probe_t0 = time.perf_counter()
                 cam_id = dcam.dev_getstring(DCAM_IDSTR.CAMERAID)
-                if cam_id.replace("S/N: ","") == self.id:
+                serial_probe_s = time.perf_counter() - serial_probe_t0
+                matched = cam_id.replace("S/N: ","") == self.id
+                print(
+                    f"[TIMER][HAMAMATSU][OPEN] enumerate_camera requested_serial={self.id} "
+                    f"index={cam} candidate_serial={cam_id} matched={int(matched)} "
+                    f"dcam_object_s={dcam_object_s:.3f} serial_probe_s={serial_probe_s:.3f}"
+                )
+                if matched:
                     self.log.info(f"camera found for S/N: {self.id}")
                     self.dcam = dcam
                     self.cam_num = cam
                     # open camera
-                    self.dcam.dev_open()
+                    dev_open_t0 = time.perf_counter()
+                    dev_open_result = self.dcam.dev_open()
+                    print(
+                        f"[TIMER][HAMAMATSU][OPEN] dev_open requested_serial={self.id} "
+                        f"index={cam} result={dev_open_result} "
+                        f"elapsed_s={time.perf_counter() - dev_open_t0:.3f}"
+                    )
                     break
 
             if 'dcam' in locals():
@@ -207,6 +234,10 @@ class Camera(BaseCamera):
             self.log.error('DcamapiSingleton.init() fails with error {}'.format(DCAMERR(DcamapiSingleton.lasterr()).name))
         # initialize parameter values
         # self._update_parameters()
+        print(
+            f"[TIMER][HAMAMATSU][OPEN] constructor_total requested_serial={self.id} "
+            f"elapsed_s={time.perf_counter() - init_total_t0:.3f}"
+        )
 
 
     @DeliminatedProperty(minimum=float('-inf'), maximum=float('inf'))
