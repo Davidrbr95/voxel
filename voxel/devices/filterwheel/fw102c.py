@@ -7,7 +7,8 @@ SWITCH_TIME_S = 6 # estimated timing
 
 class ThorlabsWheel(BaseFilterWheel, RS232):
 
-    def __init__(self, id: str, baudrate: int, filters: dict, port: str, speed: str, **kwargs):
+    def __init__(self, id: str, baudrate: int, filters: dict, port: str, speed: str,
+                 initial_filter: str = None, **kwargs):
         # Initialize the logger
         self.log = logging.getLogger(__name__ + "." + self.__class__.__name__)
         self.id = id
@@ -19,8 +20,8 @@ class ThorlabsWheel(BaseFilterWheel, RS232):
         # Initialize the filter wheel
 
         
-        # Go to the home filter (assuming value 1 means home position)
-        self.filter = next(key for key, value in self.filters.items() if value == 1)
+        # Move once during instrument initialization. Acquisitions do not switch filters.
+        self.filter = initial_filter or next(key for key, value in self.filters.items() if value == 1)
         self.speed = speed
 
     @property
