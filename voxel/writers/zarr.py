@@ -2,13 +2,15 @@ import logging
 import multiprocessing
 import os
 import sys
+import tempfile
+import json
 from ctypes import c_wchar
 from math import ceil
 from multiprocessing import Array, Process
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
 from time import perf_counter, sleep
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 import acquire_zarr as aqz
@@ -27,9 +29,11 @@ COMPRESSIONS = {
     "none": aqz.CompressionCodec.NONE,
 }
 
-DATA_TYPES = {"unit8": aqz.DataType.UINT16, "uint16": aqz.DataType.UINT16}
+DATA_TYPES = {"uint8": aqz.DataType.UINT8, "unit8": aqz.DataType.UINT8, "uint16": aqz.DataType.UINT16}
 
-VERSIONS = {"v2": aqz.ZarrVersion.V2, "v3": aqz.ZarrVersion.V3}
+VERSIONS = {"v3": aqz.ZarrVersion.V3}
+if hasattr(aqz.ZarrVersion, "V2"):
+    VERSIONS["v2"] = aqz.ZarrVersion.V2
 
 SHUFFLES = {True: 1, False: 0}
 
@@ -55,10 +59,27 @@ class ZarrWriter(BaseWriter):
         self._chunk_size_x_px = None
         self._chunk_size_y_px = None
         self._chunk_size_z_px = None
+        self._shard_size_x_chunks = None
+        self._shard_size_y_chunks = None
+        self._shard_size_z_chunks = None
         self._version = None
         self._multiscale = None
         self._shuffle = 0
         self._clevel = 1
+        self._b3d_enabled = False
+        self._b3d_mode = 2
+        self._b3d_quant_step = 1.0
+        self._b3d_conversion = 2.127659574
+        self._b3d_background = 100.731672
+        self._b3d_read_noise = 1.480570
+        self._b3d_tile_size = 24
+        self._b3d_zstd_level = 3
+        self._b3d_backend = "auto"
+        self._b3d_cuda_batch_layers = 16
+        # Camera stacks normally arrive as z,y,x.  OTLS acquisition is different:
+        # frames advance along physical x and each frame is a z,y plane, so its
+        # input order is x,z,y.  Files are always emitted in canonical OME z,y,x.
+        self._input_axis_order = "zyx"
         self.nilluminations=1
         self.nchannels=1
         self.ntiles=1
@@ -136,6 +157,30 @@ class ZarrWriter(BaseWriter):
         self._chunk_size_z_px = chunk_size_z_px
 
     @property
+    def shard_size_x_chunks(self) -> Optional[int]:
+        return self._shard_size_x_chunks
+
+    @shard_size_x_chunks.setter
+    def shard_size_x_chunks(self, value: Optional[int]) -> None:
+        self._shard_size_x_chunks = None if value is None else max(1, int(value))
+
+    @property
+    def shard_size_y_chunks(self) -> Optional[int]:
+        return self._shard_size_y_chunks
+
+    @shard_size_y_chunks.setter
+    def shard_size_y_chunks(self, value: Optional[int]) -> None:
+        self._shard_size_y_chunks = None if value is None else max(1, int(value))
+
+    @property
+    def shard_size_z_chunks(self) -> Optional[int]:
+        return self._shard_size_z_chunks
+
+    @shard_size_z_chunks.setter
+    def shard_size_z_chunks(self, value: Optional[int]) -> None:
+        self._shard_size_z_chunks = None if value is None else max(1, int(value))
+
+    @property
     def frame_count_px(self) -> int:
         """Get the number of frames in the writer.
 
@@ -165,6 +210,18 @@ class ZarrWriter(BaseWriter):
         :rtype: int
         """
         return CHUNK_COUNT_PX
+
+    @property
+    def input_axis_order(self) -> str:
+        """Axis order of incoming shared-memory volumes (``zyx`` or ``xzy``)."""
+        return self._input_axis_order
+
+    @input_axis_order.setter
+    def input_axis_order(self, value: str) -> None:
+        normalized = str(value).strip().lower()
+        if normalized not in {"zyx", "xzy"}:
+            raise ValueError("input_axis_order must be 'zyx' or 'xzy'")
+        self._input_axis_order = normalized
 
 
     @property
@@ -245,11 +302,133 @@ class ZarrWriter(BaseWriter):
         * **off**
         :type shuffle: str
         """
-        valid = list(SHUFFLES.keys())
-        if shuffle not in valid:
-            raise ValueError("shuffle must be one of %r." % valid)
-        self.log.info(f"setting zarr shuffle to: {shuffle}")
-        self._shuffle = SHUFFLES[shuffle]
+        if isinstance(shuffle, bool):
+            normalized = 1 if shuffle else 0
+        elif isinstance(shuffle, str):
+            names = {"none": 0, "off": 0, "byte": 1, "on": 1, "bit": 2}
+            try:
+                normalized = names[shuffle.strip().lower()]
+            except KeyError as exc:
+                raise ValueError("shuffle must be NONE/OFF, BYTE/ON, BIT, or 0/1/2") from exc
+        else:
+            normalized = int(shuffle)
+        if normalized not in (0, 1, 2):
+            raise ValueError("shuffle must be NONE/OFF, BYTE/ON, BIT, or 0/1/2")
+        self.log.info(f"setting zarr shuffle to: {normalized}")
+        self._shuffle = normalized
+
+    @property
+    def b3d_enabled(self) -> bool:
+        return self._b3d_enabled
+
+    @b3d_enabled.setter
+    def b3d_enabled(self, value: bool) -> None:
+        if not isinstance(value, bool):
+            raise TypeError("b3d_enabled must be a bool")
+        self._b3d_enabled = value
+
+    @property
+    def b3d_mode(self) -> int:
+        return self._b3d_mode
+
+    @b3d_mode.setter
+    def b3d_mode(self, value: int) -> None:
+        result = int(value)
+        if result not in (1, 2):
+            raise ValueError("b3d_mode must be 1 or 2")
+        self._b3d_mode = result
+
+    @staticmethod
+    def _positive_float(value, name: str) -> float:
+        result = float(value)
+        if not np.isfinite(result) or result <= 0:
+            raise ValueError(f"{name} must be finite and greater than zero")
+        return result
+
+    @property
+    def b3d_quant_step(self) -> float:
+        return self._b3d_quant_step
+
+    @b3d_quant_step.setter
+    def b3d_quant_step(self, value: float) -> None:
+        self._b3d_quant_step = self._positive_float(value, "b3d_quant_step")
+
+    @property
+    def b3d_conversion(self) -> float:
+        return self._b3d_conversion
+
+    @b3d_conversion.setter
+    def b3d_conversion(self, value: float) -> None:
+        self._b3d_conversion = self._positive_float(value, "b3d_conversion")
+
+    @property
+    def b3d_background(self) -> float:
+        return self._b3d_background
+
+    @b3d_background.setter
+    def b3d_background(self, value: float) -> None:
+        result = float(value)
+        if not np.isfinite(result):
+            raise ValueError("b3d_background must be finite")
+        self._b3d_background = result
+
+    @property
+    def b3d_read_noise(self) -> float:
+        return self._b3d_read_noise
+
+    @b3d_read_noise.setter
+    def b3d_read_noise(self, value: float) -> None:
+        result = float(value)
+        if not np.isfinite(result) or result < 0:
+            raise ValueError("b3d_read_noise must be finite and non-negative")
+        self._b3d_read_noise = result
+
+    @property
+    def b3d_tile_size(self) -> int:
+        return self._b3d_tile_size
+
+    @b3d_tile_size.setter
+    def b3d_tile_size(self, value: int) -> None:
+        result = int(value)
+        if not 1 <= result <= 65535:
+            raise ValueError("b3d_tile_size must be between 1 and 65535")
+        self._b3d_tile_size = result
+
+    @property
+    def b3d_zstd_level(self) -> int:
+        return self._b3d_zstd_level
+
+    @b3d_zstd_level.setter
+    def b3d_zstd_level(self, value: int) -> None:
+        result = int(value)
+        if not 1 <= result <= 22:
+            raise ValueError("b3d_zstd_level must be between 1 and 22")
+        self._b3d_zstd_level = result
+
+    @property
+    def b3d_backend(self) -> str:
+        return self._b3d_backend
+
+    @b3d_backend.setter
+    def b3d_backend(self, value: str) -> None:
+        result = str(value).strip().lower()
+        if result == "gpu":
+            result = "cuda"
+        if result not in {"auto", "cpu", "cuda"}:
+            raise ValueError("b3d_backend must be 'auto', 'cpu', or 'cuda'")
+        self._b3d_backend = result
+
+    @property
+    def b3d_cuda_batch_layers(self) -> int:
+        """Z chunk layers per CUDA encode call; CPU codecs ignore this."""
+        return self._b3d_cuda_batch_layers
+
+    @b3d_cuda_batch_layers.setter
+    def b3d_cuda_batch_layers(self, value: int) -> None:
+        result = int(value)
+        if not 1 <= result <= 64:
+            raise ValueError("b3d_cuda_batch_layers must be between 1 and 64")
+        self._b3d_cuda_batch_layers = result
 
     def _determine_setup_id(self, illumination=0, channel=0, tile=0, angle=0):
         """Takes the view attributes (illumination, channel, tile, angle) and converts them into unique setup_id.
@@ -290,7 +469,9 @@ class ZarrWriter(BaseWriter):
         * **v3**
         :type value: str
         """
-        valid = list(VERSIONS.keys())
+        # The B3D fork exposes only Zarr v3. Keep accepting the legacy YAML's
+        # v2 value so the application can start; modern acquire-zarr writes v3.
+        valid = ["v2", "v3"]
         if version not in valid:
             raise ValueError("version must be one of %r." % valid)
         self.log.info(f"setting zarr version to: {version}")
@@ -461,14 +642,48 @@ class ZarrWriter(BaseWriter):
             affine_shift
         )
         # voxel size metadata to create the converter
-        image_size_z = int(self._frame_count_px)
-        image_size = pw.ImageSize(
-            x=self._column_count_px, y=self._row_count_px, z=image_size_z, c=1, t=1
-        )
-        self.stack_shapes[0] = (image_size_z, self._row_count_px, self._column_count_px)
-        block_size = pw.ImageSize(
-            x=self._column_count_px, y=self._row_count_px, z=CHUNK_COUNT_PX, c=1, t=1
-        )
+        if self._input_axis_order == "xzy":
+            # Incoming (scan x, camera z, camera y) becomes OME (z, y, x).
+            image_size = pw.ImageSize(
+                x=self._frame_count_px,
+                y=self._column_count_px,
+                z=self._row_count_px,
+                c=1,
+                t=1,
+            )
+            self.stack_shapes[0] = (
+                self._row_count_px,
+                self._column_count_px,
+                self._frame_count_px,
+            )
+            block_size = pw.ImageSize(
+                x=self._chunk_size_x_px,
+                y=self._chunk_size_y_px,
+                z=self._chunk_size_z_px,
+                c=1,
+                t=1,
+            )
+        else:
+            image_size_z = int(self._frame_count_px)
+            image_size = pw.ImageSize(
+                x=self._column_count_px,
+                y=self._row_count_px,
+                z=image_size_z,
+                c=1,
+                t=1,
+            )
+            self.stack_shapes[0] = (
+                image_size_z,
+                self._row_count_px,
+                self._column_count_px,
+            )
+            block_size = pw.ImageSize(
+                x=self._column_count_px,
+                y=self._row_count_px,
+                z=CHUNK_COUNT_PX,
+                c=1,
+                t=1,
+            )
         # create run process
         self._process = Process(
             target=self._run,
@@ -531,10 +746,29 @@ class ZarrWriter(BaseWriter):
 
             seqdesc = ET.SubElement(root, 'SequenceDescription')
             imgload = ET.SubElement(seqdesc, 'ImageLoader')
-            imgload.set('format', 'bdv.multimg.zarr')
-            el = ET.SubElement(imgload, 'zarr')
-            el.set('type', 'relative')
-            el.text = os.path.basename(filename)
+            if self._b3d_enabled:
+                imgload.set('format', 'bdv.b3d.zarr3')
+                imgload.set('version', '1.0')
+                views = ET.SubElement(imgload, 'views')
+                for itime in range(self.ntimes):
+                    for isetup in range(self.nsetups):
+                        if self.setup_id_present[itime][isetup]:
+                            view = ET.SubElement(
+                                views,
+                                'view',
+                                {
+                                    'setup': str(isetup),
+                                    'timepoint': str(itime),
+                                },
+                            )
+                            zarr = ET.SubElement(view, 'zarr', {'type': 'relative'})
+                            zarr.text = os.path.basename(filename)
+                            ET.SubElement(view, 'dataset').text = '0'
+            else:
+                imgload.set('format', 'bdv.multimg.zarr')
+                el = ET.SubElement(imgload, 'zarr')
+                el.set('type', 'relative')
+                el.text = os.path.basename(filename)
             # write ViewSetups
             viewsets = ET.SubElement(seqdesc, 'ViewSetups')
             for iillumination in range(self.nilluminations):
@@ -665,6 +899,304 @@ class ZarrWriter(BaseWriter):
         else:
             if level and (not elem.tail or not elem.tail.strip()):
                 elem.tail = i
+
+    def _modern_compression_settings(self):
+        """Build acquire-zarr >=0.6 compression settings."""
+        if self._b3d_enabled:
+            # Complete B3D array codecs are mutually exclusive with
+            # ordinary Blosc CompressionSettings.
+            return None
+        if self.compression == "none":
+            return None
+        return aqz.CompressionSettings(
+            compressor=aqz.Compressor.BLOSC1,
+            codec=self._compression,
+            level=self._clevel,
+            shuffle=self._shuffle,
+        )
+
+    def _modern_b3d_codec_settings(self):
+        """Build the selected custom acquire-zarr B3D codec settings."""
+        if not self._b3d_enabled:
+            return None
+        settings_name = f"B3DMode{self._b3d_mode}CodecSettings"
+        settings_class = getattr(aqz, settings_name, None)
+        if settings_class is None:
+            raise RuntimeError(
+                f"B3D Mode {self._b3d_mode} requires acquire-zarr exposing "
+                f"{settings_name}"
+            )
+        if self._data_type != "uint16":
+            raise ValueError(
+                f"b3d.mode{self._b3d_mode} version 1 supports only uint16 data"
+            )
+        backend = {
+            "auto": aqz.B3DBackend.AUTO,
+            "cpu": aqz.B3DBackend.CPU,
+            "cuda": aqz.B3DBackend.CUDA,
+        }[self._b3d_backend]
+        return settings_class(
+            quant_step=self._b3d_quant_step,
+            conversion=self._b3d_conversion,
+            background=self._b3d_background,
+            read_noise=self._b3d_read_noise,
+            tile_size=self._b3d_tile_size,
+            zstd_level=self._b3d_zstd_level,
+            backend=backend,
+            cuda_batch_layers=self._b3d_cuda_batch_layers,
+        )
+
+    def _ome_dimension_values(self):
+        """Return canonical OME z,y,x sizes, chunks, shards, and scales."""
+        if self._input_axis_order == "xzy":
+            sizes = {
+                "z": self.row_count_px,
+                "y": self.column_count_px,
+                "x": self.frame_count_px,
+            }
+        else:
+            sizes = {
+                "z": self.frame_count_px,
+                "y": self.row_count_px,
+                "x": self.column_count_px,
+            }
+        chunks = {
+            "z": self._chunk_size_z_px,
+            "y": self._chunk_size_y_px,
+            "x": self._chunk_size_x_px,
+        }
+        configured_shards = {
+            "z": self._shard_size_z_chunks,
+            "y": self._shard_size_y_chunks,
+            "x": self._shard_size_x_chunks,
+        }
+        shards = {
+            axis: configured_shards[axis]
+            or (1 if axis == "z" else ceil(sizes[axis] / chunks[axis]))
+            for axis in "zyx"
+        }
+        scales = {
+            "z": float(self._z_voxel_size_um or 1.0),
+            "y": float(self._y_voxel_size_um or 1.0),
+            "x": float(self._x_voxel_size_um or 1.0),
+        }
+        return sizes, chunks, shards, scales
+
+    def _modern_ome_dimensions(self):
+        sizes, chunks, shards, scales = self._ome_dimension_values()
+        return [
+            aqz.Dimension(
+                name=axis,
+                kind=aqz.DimensionType.SPACE,
+                unit="micrometer",
+                scale=scales[axis],
+                array_size_px=sizes[axis],
+                chunk_size_px=chunks[axis],
+                shard_size_chunks=shards[axis],
+            )
+            for axis in "zyx"
+        ]
+
+    def _create_modern_stream_settings(self, filepath: Path):
+        compression_settings = self._modern_compression_settings()
+        b3d_codec_settings = self._modern_b3d_codec_settings()
+        dimensions = self._modern_ome_dimensions()
+        array_kwargs = {
+            "output_key": "0",
+            "compression": compression_settings,
+            "codec": b3d_codec_settings,
+            "dimensions": dimensions,
+            "data_type": DATA_TYPES[self._data_type],
+        }
+        if self._multiscale:
+            array_kwargs["downsampling_method"] = aqz.DownsamplingMethod.MEAN
+        array_settings = aqz.ArraySettings(**array_kwargs)
+        if self._version != "v3":
+            logger = getattr(self, "log", None)
+            if logger is not None:
+                logger.warning(
+                    "acquire-zarr >=0.6 writes Zarr v3; treating configured version %s as v3",
+                    self._version,
+                )
+        return aqz.StreamSettings(
+            store_path=str(filepath),
+            version=aqz.ZarrVersion.V3,
+            overwrite=False,
+            arrays=[array_settings],
+        )
+
+    def _create_legacy_stream_settings(self, filepath: Path):
+        if self._b3d_enabled:
+            raise RuntimeError(
+                "B3D requires acquire-zarr exposing ArraySettings and "
+                "B3DMode1CodecSettings/B3DMode2CodecSettings"
+            )
+        compression_settings = aqz.CompressionSettings(
+            codec=self._compression,
+            compressor=aqz.Compressor.BLOSC1,
+            clevel=self._clevel,
+            shuffle=self._shuffle,
+        )
+        version = VERSIONS.get(self._version)
+        if version is None:
+            raise RuntimeError(f"Installed acquire-zarr does not support {self._version}")
+        settings = aqz.StreamSettings(
+            store_path=str(filepath),
+            data_type=DATA_TYPES[self._data_type],
+            version=version,
+            multiscale=self._multiscale,
+            compression=compression_settings if self.compression != "none" else None,
+        )
+        sizes, chunks, shards, _ = self._ome_dimension_values()
+        settings.dimensions.extend(
+            [
+                aqz.Dimension(
+                    name=axis,
+                    type=aqz.DimensionType.SPACE,
+                    array_size_px=sizes[axis],
+                    chunk_size_px=chunks[axis],
+                    shard_size_chunks=shards[axis],
+                )
+                for axis in "zyx"
+            ]
+        )
+        return settings
+
+    def _create_stream_settings(self, filepath: Path):
+        if hasattr(aqz, "ArraySettings"):
+            return self._create_modern_stream_settings(filepath)
+        return self._create_legacy_stream_settings(filepath)
+
+    def _append_xzy_volume_as_ome_zyx(
+        self, stream, volume_xzy, shared_progress=None
+    ) -> None:
+        """Transpose a staged OTLS x,z,y volume into bounded z,y,x appends."""
+        if tuple(volume_xzy.shape) != (
+            int(self.frame_count_px),
+            int(self.row_count_px),
+            int(self.column_count_px),
+        ):
+            raise ValueError(
+                "Staged xzy volume shape does not match writer geometry: "
+                f"{tuple(volume_xzy.shape)}"
+            )
+        # Keep transpose memory bounded. acquire-zarr may buffer these slabs until
+        # a complete z chunk is available.
+        slab_depth = max(1, min(int(self._chunk_size_z_px or 1), 8))
+        for z_start in range(0, int(self.row_count_px), slab_depth):
+            z_stop = min(int(self.row_count_px), z_start + slab_depth)
+            block_zyx = np.ascontiguousarray(
+                np.transpose(volume_xzy[:, z_start:z_stop, :], (1, 2, 0))
+            )
+            stream.append(block_zyx)
+            if shared_progress is not None:
+                shared_progress.value = 0.8 + 0.2 * (
+                    z_stop / float(self.row_count_px)
+                )
+
+    @staticmethod
+    def _read_stable_zarr_metadata(
+        metadata_paths, stability_seconds: float = 0.25, timeout_seconds: float = 5.0
+    ):
+        """Wait for acquire-zarr metadata writes to finish and parse them."""
+        deadline = perf_counter() + timeout_seconds
+        previous = None
+        unchanged_since = None
+        last_error = None
+        while perf_counter() < deadline:
+            try:
+                snapshot = tuple(path.read_bytes() for path in metadata_paths)
+                parsed = tuple(json.loads(data) for data in snapshot)
+            except (OSError, json.JSONDecodeError) as exc:
+                last_error = exc
+                previous = None
+                unchanged_since = None
+                sleep(0.02)
+                continue
+            now = perf_counter()
+            if snapshot == previous:
+                if unchanged_since is not None and now - unchanged_since >= stability_seconds:
+                    return parsed
+            else:
+                previous = snapshot
+                unchanged_since = now
+            sleep(0.02)
+        raise RuntimeError(
+            "acquire-zarr metadata did not become stable after close"
+        ) from last_error
+
+    @staticmethod
+    def _atomic_write_json(path: Path, payload) -> None:
+        """Replace one JSON file atomically so readers never observe a partial write."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=str(path.parent),
+            delete=False,
+        )
+        temporary_path = Path(handle.name)
+        try:
+            with handle:
+                json.dump(payload, handle, indent=2)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_path, path)
+        finally:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
+
+    def _write_ome_zarr_metadata(self, filepath: Path) -> None:
+        """Atomically publish OME and valid-frame metadata after stream close."""
+        _, _, _, scales = self._ome_dimension_values()
+        root_metadata_path = filepath / "zarr.json"
+        array_metadata_path = filepath / "0" / "zarr.json"
+        root_metadata, array_metadata = self._read_stable_zarr_metadata(
+            (root_metadata_path, array_metadata_path)
+        )
+        root_attributes = dict(root_metadata.get("attributes", {}) or {})
+        root_attributes["ome"] = {
+            "version": "0.5",
+            "multiscales": [
+                {
+                    "name": Path(self._filename).stem,
+                    "axes": [
+                        {"name": axis, "type": "space", "unit": "micrometer"}
+                        for axis in "zyx"
+                    ],
+                    "datasets": [
+                        {
+                            "path": "0",
+                            "coordinateTransformations": [
+                                {
+                                    "type": "scale",
+                                    "scale": [scales[axis] for axis in "zyx"],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+        root_attributes["valid_frame_count_px"] = int(self._frame_count_px)
+        root_metadata["attributes"] = root_attributes
+
+        array_attributes = dict(array_metadata.get("attributes", {}) or {})
+        array_attributes["valid_frame_count_px"] = int(self._frame_count_px)
+        array_metadata["attributes"] = array_attributes
+
+        # Publish the array metadata first and the root group last.  The root is
+        # the store's entry point, so a reader that sees the new root also sees
+        # the completed child metadata.
+        self._atomic_write_json(array_metadata_path, array_metadata)
+        self._atomic_write_json(root_metadata_path, root_metadata)
+
     def _run(
         self,
         shm_shape: List[int],
@@ -694,96 +1226,88 @@ class ZarrWriter(BaseWriter):
         logger.addHandler(log_handler)
         filepath = Path(self._path, self._acquisition_name, self._filename).absolute()
 
-        # print(self._compression, aqz.Compressor.BLOSC1, self._clevel, self._shuffle)
-        compression_settings = aqz.CompressionSettings(
-            codec=self._compression,  # compression codec
-            compressor=aqz.Compressor.BLOSC1,  # compressor
-            clevel=self._clevel,  # compression level
-            shuffle=self._shuffle,  # shuffle filter
-        )
-
-        settings = aqz.StreamSettings(
-            store_path=str(filepath),
-            data_type=DATA_TYPES[self._data_type],
-            version=VERSIONS[self._version],
-            multiscale=self._multiscale,
-            # compression=compression_settings,
-        )
-
-        settings.dimensions.extend(
-            [
-                aqz.Dimension(
-                    name="z",
-                    type=aqz.DimensionType.SPACE,
-                    array_size_px=self.frame_count_px,
-                    chunk_size_px=self._chunk_size_z_px,
-                    shard_size_chunks=1,  # hardcode shard to 1 in z
-                ),
-                aqz.Dimension(
-                    name="y",
-                    type=aqz.DimensionType.SPACE,
-                    array_size_px=self.row_count_px,
-                    chunk_size_px=self._chunk_size_y_px,
-                    shard_size_chunks=ceil(self.row_count_px / self._chunk_size_y_px),
-                ),
-                aqz.Dimension(
-                    name="x",
-                    type=aqz.DimensionType.SPACE,
-                    array_size_px=self.column_count_px,
-                    chunk_size_px=self._chunk_size_x_px,
-                    shard_size_chunks=ceil(self.column_count_px / self._chunk_size_x_px),
-                ),
-            ]
-        )
-
+        settings = self._create_stream_settings(filepath)
         stream = aqz.ZarrStream(settings)
-
-        chunk_total = ceil(self._frame_count_px / CHUNK_COUNT_PX)
-        for chunk_num in range(chunk_total):
-            # Wait for new data.
-            while self.done_reading.is_set():
-                sleep(0.001)
-            # Attach a reference to the data from shared memory.
-            shm = SharedMemory(self.shm_name, create=False, size=shm_nbytes)
-            frames = np.ndarray(shm_shape, self._data_type, buffer=shm.buf)
-            frame_start = int(chunk_num * CHUNK_COUNT_PX)
-            remaining_frames = int(self._frame_count_px - frame_start)
-            valid_frames = int(min(int(frames.shape[0]), max(0, remaining_frames)))
-            if valid_frames <= 0:
-                shm.close()
-                self.done_reading.set()
-                shared_progress.value = 1.0
-                break
-            # shared_log_queue.put(
-            #     f"{self._filename}: writing chunk " f"{chunk_num + 1}/{chunk_total} of size {frames.shape}."
-            # )
-            start_time = perf_counter()
-            # Put the frames into the stream
-            stream.append(frames[:valid_frames])
-            frames = None
-            # shared_log_queue.put(f"{self._filename}: writing chunk took " f"{perf_counter() - start_time:.2f} [s]")
-            shm.close()
-            self.done_reading.set()
-            # update shared value progress range 0-1
-            shared_progress.value = (chunk_num + 1) / chunk_total
-
-            # shared_log_queue.put(f"{self._filename}: {self._progress.value * 100:.2f} [%] complete.")
+        staged_volume = None
+        staged_path = None
+        if self._input_axis_order == "xzy":
+            filepath.parent.mkdir(parents=True, exist_ok=True)
+            staged_file = tempfile.NamedTemporaryFile(
+                mode="w+b",
+                prefix=f".{filepath.stem}.",
+                suffix=".xzy.tmp",
+                dir=str(filepath.parent),
+                delete=False,
+            )
+            staged_path = Path(staged_file.name)
+            staged_file.close()
+            staged_volume = np.memmap(
+                staged_path,
+                mode="w+",
+                dtype=self._data_type,
+                shape=(
+                    int(self.frame_count_px),
+                    int(self.row_count_px),
+                    int(self.column_count_px),
+                ),
+            )
 
         try:
-            import zarr
+            chunk_total = ceil(self._frame_count_px / CHUNK_COUNT_PX)
+            for chunk_num in range(chunk_total):
+                # Wait for new data.
+                while self.done_reading.is_set():
+                    sleep(0.001)
+                # Attach a reference to the data from shared memory.
+                shm = SharedMemory(self.shm_name, create=False, size=shm_nbytes)
+                frames = np.ndarray(shm_shape, self._data_type, buffer=shm.buf)
+                frame_start = int(chunk_num * CHUNK_COUNT_PX)
+                remaining_frames = int(self._frame_count_px - frame_start)
+                valid_frames = int(
+                    min(int(frames.shape[0]), max(0, remaining_frames))
+                )
+                if valid_frames <= 0:
+                    shm.close()
+                    self.done_reading.set()
+                    break
 
-            root = zarr.open(str(filepath), mode="a")
-            try:
-                root.attrs["valid_frame_count_px"] = int(self._frame_count_px)
-            except Exception:
-                pass
-            try:
-                if "0" in root:
-                    root["0"].attrs["valid_frame_count_px"] = int(self._frame_count_px)
-            except Exception:
-                pass
-        except Exception:
-            pass
+                if staged_volume is not None:
+                    frame_stop = frame_start + valid_frames
+                    staged_volume[frame_start:frame_stop, :, :] = frames[:valid_frames]
+                else:
+                    stream.append(frames[:valid_frames])
+                frames = None
+                shm.close()
+                self.done_reading.set()
+                if staged_volume is not None:
+                    shared_progress.value = 0.8 * (chunk_num + 1) / chunk_total
+                else:
+                    shared_progress.value = (chunk_num + 1) / chunk_total
+
+            if staged_volume is not None:
+                staged_volume.flush()
+                self._append_xzy_volume_as_ome_zyx(
+                    stream, staged_volume, shared_progress=shared_progress
+                )
+
+            stream.close()
+            stream = None
+        finally:
+            if stream is not None:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+            if staged_volume is not None:
+                staged_volume.flush()
+                del staged_volume
+            if staged_path is not None:
+                try:
+                    os.remove(staged_path)
+                except OSError:
+                    pass
+
+        self._write_ome_zarr_metadata(filepath)
 
         # check and empty queue to avoid code hanging in process
         if not shared_log_queue.empty:
