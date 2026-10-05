@@ -576,7 +576,14 @@ class Camera(BaseCamera):
         # initialize variables for acquisition run
         self.clear_runtime_state()
         self.buffer_index = -1
-        self.dcam.cap_start()
+        if self.dcam.cap_start() is False:
+            raise RuntimeError("Hamamatsu DCAM cap_start() failed.")
+
+    def get_frame_count(self):
+        """Return the number of frames transferred in the current capture."""
+        transfer_info = self.dcam.cap_transferinfo()
+        self.checkStatus(transfer_info, "dcamcap_transferinfo")
+        return int(transfer_info.nFrameCount)
     
     def ready_signal(self):
         self.camera_ready_event.set()

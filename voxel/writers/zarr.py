@@ -80,6 +80,15 @@ class ZarrWriter(BaseWriter):
         # frames advance along physical x and each frame is a z,y plane, so its
         # input order is x,z,y.  Files are always emitted in canonical OME z,y,x.
         self._input_axis_order = "zyx"
+        # The persistent acquisition consumer may allow this worker to finish
+        # after the physical scan has returned.  Publish the XML from this
+        # worker only after the Zarr stream and its root metadata are complete.
+        self._writes_xml_on_worker_completion = True
+        # The acquisition consumer installs one shared multiprocessing lock on
+        # every writer spawned for a multi-acquisition sequence.  Staging raw
+        # XZY frames remains concurrent; only the expensive transpose/final
+        # Zarr publication is serialized.
+        self._xzy_finalize_lock = None
         self.nilluminations=1
         self.nchannels=1
         self.ntiles=1
@@ -582,7 +591,14 @@ class ZarrWriter(BaseWriter):
         # effective voxel size in z direction (scan)
         size_z = self._z_voxel_size_um
 
-        voxel_sizes = (size_x, size_y, size_z)
+        if self._input_axis_order == "xzy":
+            # The stored array is canonical OME Z/Y/X, so BigStitcher XML
+            # coordinates are X=scan, Y=camera-column, Z=camera-row.  The
+            # legacy writer metadata was expressed as X=column, Y=row,
+            # Z=scan and must be permuted with the voxel data.
+            voxel_sizes = (size_z, size_x, size_y)
+        else:
+            voxel_sizes = (size_x, size_y, size_z)
         self.voxel_size_dict[(self.current_tile_num, self.current_channel_num)] = (
             voxel_sizes
         )
@@ -612,25 +628,45 @@ class ZarrWriter(BaseWriter):
         # shift tile in z, unit pixels
         shift_z = scale_z * (self._z_position_mm * 1000 / size_y)
 
-        affine_deskew = np.array(
-            ([1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, shear, 1.0, 0.0])
-        )
-
-        affine_scale = np.array(
-            (
-                [scale_x, 0.0, 0.0, 0.0],
-                [0.0, scale_y, 0.0, 0.0],
-                [0.0, 0.0, scale_z, 0.0],
+        if self._input_axis_order == "xzy":
+            # Legacy XYZ=(camera-column, camera-row, scan) becomes canonical
+            # XYZ=(scan, camera-column, camera-row).  Apply the same cyclic
+            # permutation to every spatial transform written to BigStitcher.
+            affine_deskew = np.array(
+                ([1.0, 0.0, shear, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0])
             )
-        )
-
-        affine_shift = np.array(
-            (
-                [1.0, 0.0, 0.0, shift_y],
-                [0.0, 1.0, 0.0, shift_z],
-                [0.0, 0.0, 1.0, shift_x],
+            affine_scale = np.array(
+                (
+                    [scale_z, 0.0, 0.0, 0.0],
+                    [0.0, scale_x, 0.0, 0.0],
+                    [0.0, 0.0, scale_y, 0.0],
+                )
             )
-        )
+            affine_shift = np.array(
+                (
+                    [1.0, 0.0, 0.0, shift_x],
+                    [0.0, 1.0, 0.0, shift_y],
+                    [0.0, 0.0, 1.0, shift_z],
+                )
+            )
+        else:
+            affine_deskew = np.array(
+                ([1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, shear, 1.0, 0.0])
+            )
+            affine_scale = np.array(
+                (
+                    [scale_x, 0.0, 0.0, 0.0],
+                    [0.0, scale_y, 0.0, 0.0],
+                    [0.0, 0.0, scale_z, 0.0],
+                )
+            )
+            affine_shift = np.array(
+                (
+                    [1.0, 0.0, 0.0, shift_y],
+                    [0.0, 1.0, 0.0, shift_z],
+                    [0.0, 0.0, 1.0, shift_x],
+                )
+            )
 
         self.affine_deskew_dict[0] = (
             affine_deskew
@@ -1227,9 +1263,10 @@ class ZarrWriter(BaseWriter):
         filepath = Path(self._path, self._acquisition_name, self._filename).absolute()
 
         settings = self._create_stream_settings(filepath)
-        stream = aqz.ZarrStream(settings)
+        stream = None
         staged_volume = None
         staged_path = None
+        output_published = False
         if self._input_axis_order == "xzy":
             filepath.parent.mkdir(parents=True, exist_ok=True)
             staged_file = tempfile.NamedTemporaryFile(
@@ -1251,6 +1288,8 @@ class ZarrWriter(BaseWriter):
                     int(self.column_count_px),
                 ),
             )
+        else:
+            stream = aqz.ZarrStream(settings)
 
         try:
             chunk_total = ceil(self._frame_count_px / CHUNK_COUNT_PX)
@@ -1286,12 +1325,47 @@ class ZarrWriter(BaseWriter):
 
             if staged_volume is not None:
                 staged_volume.flush()
-                self._append_xzy_volume_as_ome_zyx(
-                    stream, staged_volume, shared_progress=shared_progress
-                )
-
-            stream.close()
-            stream = None
+                finalize_lock = getattr(self, "_xzy_finalize_lock", None)
+                if finalize_lock is not None:
+                    print(
+                        "[ZarrWriter][FinalizeQueue] waiting "
+                        f"store={filepath}",
+                        flush=True,
+                    )
+                    finalize_lock.acquire()
+                    print(
+                        "[ZarrWriter][FinalizeQueue] acquired "
+                        f"store={filepath}",
+                        flush=True,
+                    )
+                try:
+                    # Do not construct acquire-zarr (or a CUDA codec) until this
+                    # worker owns the finalization slot.  Multiple 13+ GB OTLS
+                    # staging workers can therefore collect on schedule without
+                    # simultaneously transposing into competing Zarr streams.
+                    stream = aqz.ZarrStream(settings)
+                    self._append_xzy_volume_as_ome_zyx(
+                        stream, staged_volume, shared_progress=shared_progress
+                    )
+                    stream.close()
+                    stream = None
+                    self._write_ome_zarr_metadata(filepath)
+                    self.write_xml()
+                    output_published = True
+                finally:
+                    if finalize_lock is not None:
+                        finalize_lock.release()
+                        print(
+                            "[ZarrWriter][FinalizeQueue] released "
+                            f"store={filepath}",
+                            flush=True,
+                        )
+            else:
+                stream.close()
+                stream = None
+                self._write_ome_zarr_metadata(filepath)
+                self.write_xml()
+                output_published = True
         finally:
             if stream is not None:
                 try:
@@ -1301,13 +1375,17 @@ class ZarrWriter(BaseWriter):
             if staged_volume is not None:
                 staged_volume.flush()
                 del staged_volume
-            if staged_path is not None:
+            if staged_path is not None and output_published:
                 try:
                     os.remove(staged_path)
                 except OSError:
                     pass
-
-        self._write_ome_zarr_metadata(filepath)
+            elif staged_path is not None:
+                print(
+                    "[ZarrWriter][Recovery] preserving raw staging file after "
+                    f"incomplete publication: {staged_path}",
+                    flush=True,
+                )
 
         # check and empty queue to avoid code hanging in process
         if not shared_log_queue.empty:
